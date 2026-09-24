@@ -271,6 +271,99 @@ jobs:
               '#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !defined(PLATFORM_VITA) && !defined(__SWITCH__) && !defined(PLATFORM_PS3) && !defined(PLATFORM_IOS)',
           )
 
+
+          # POST VOID / GameMaker uses vertex_format_add_texcoord.
+          # Butterscotch currently registers the implementation under
+          # the misspelled name vertex_format_add_textcoord.
+          replace(
+              'src/vm_builtins.c',
+              'VM_registerBuiltin(ctx, "vertex_format_add_textcoord", builtin_vertex_format_add_textcoord);',
+              '''VM_registerBuiltin(ctx, "vertex_format_add_textcoord", builtin_vertex_format_add_textcoord);
+              VM_registerBuiltin(ctx, "vertex_format_add_texcoord", builtin_vertex_format_add_textcoord);''',
+          )
+
+          # GameMaker 2023 calls this during Localization setup.
+          # It only toggles font antialiasing state; returning undefined is
+          # enough for POST VOID to continue on our renderer.
+          replace(
+              'src/vm_builtins.c',
+              '// ===[ STUB LOGGING ]===',
+              '''static RValue builtin_font_add_enable_aa(
+                  MAYBE_UNUSED VMContext* ctx,
+                  MAYBE_UNUSED RValue* args,
+                  MAYBE_UNUSED int32_t argCount
+              ) {
+                  return RValue_makeUndefined();
+              }
+
+              // ===[ STUB LOGGING ]===''',
+          )
+
+          replace(
+              'src/vm_builtins.c',
+              'VM_registerBuiltin(ctx, "font_add_sprite", builtin_font_add_sprite);',
+              '''VM_registerBuiltin(ctx, "font_add_enable_aa", builtin_font_add_enable_aa);
+              VM_registerBuiltin(ctx, "font_add_sprite", builtin_font_add_sprite);''',
+          )
+
+          # iOS OpenGL ES accepts fwidth() in GLSL ES 1.00 only when the
+          # standard-derivatives extension is enabled. POST VOID's internal
+          # __yy_sdf_shader is GLSL ES 1.00 and uses fwidth().
+          gl_shader_anchor = '''        char* patchedVertexSource = nullptr;
+                  char* patchedFragmentSource = nullptr;
+          '''
+
+          gl_shader_replacement = '''        char* patchedVertexSource = nullptr;
+                  char* patchedFragmentSource = nullptr;
+
+          #ifdef PLATFORM_IOS
+                  if (
+                      modernGl->isGLES &&
+                      fragmentShaderSource != nullptr &&
+                      strncmp(fragmentShaderSource, "#version 100\\n", 13) == 0 &&
+                      strstr(fragmentShaderSource, "fwidth") != nullptr
+                  ) {
+                      const char* versionLine = "#version 100\\n";
+                      const char* extensionLine =
+                          "#extension GL_OES_standard_derivatives : enable\\n";
+
+                      size_t srcLen = strlen(fragmentShaderSource);
+                      size_t versionLen = strlen(versionLine);
+                      size_t extensionLen = strlen(extensionLine);
+
+                      patchedFragmentSource = (char*)safeMalloc(
+                          srcLen + extensionLen + 1
+                      );
+
+                      memcpy(
+                          patchedFragmentSource,
+                          versionLine,
+                          versionLen
+                      );
+
+                      memcpy(
+                          patchedFragmentSource + versionLen,
+                          extensionLine,
+                          extensionLen
+                      );
+
+                      memcpy(
+                          patchedFragmentSource + versionLen + extensionLen,
+                          fragmentShaderSource + versionLen,
+                          srcLen - versionLen + 1
+                      );
+
+                      fragmentShaderSource = patchedFragmentSource;
+                  }
+          #endif
+          '''
+
+          replace(
+              'src/gl/gl_renderer.c',
+              gl_shader_anchor,
+              gl_shader_replacement,
+          )
+
           # ----------------------------------------------------------
           # 2. Build SDL2 inside the same Xcode project on iOS.
           # ----------------------------------------------------------
@@ -1232,7 +1325,7 @@ jobs:
 
           cp -R "$APP" work/Payload/PostVoid.app
 
-          rm -f out/POST-VOID-iOS-v7-RUNTIMEFIX-ICON-BUTTONS-unsigned.ipa
+          rm -f out/POST-VOID-iOS-v8-PRELOADFIX-ICON-BUTTONS-unsigned.ipa
 
           ditto \
             -c \
@@ -1240,18 +1333,18 @@ jobs:
             --sequesterRsrc \
             --keepParent \
             work/Payload \
-            out/POST-VOID-iOS-v7-RUNTIMEFIX-ICON-BUTTONS-unsigned.ipa
+            out/POST-VOID-iOS-v8-PRELOADFIX-ICON-BUTTONS-unsigned.ipa
 
-          test -s out/POST-VOID-iOS-v7-RUNTIMEFIX-ICON-BUTTONS-unsigned.ipa
+          test -s out/POST-VOID-iOS-v8-PRELOADFIX-ICON-BUTTONS-unsigned.ipa
 
           echo "IPA ready:"
-          ls -lh out/POST-VOID-iOS-v7-RUNTIMEFIX-ICON-BUTTONS-unsigned.ipa
+          ls -lh out/POST-VOID-iOS-v8-PRELOADFIX-ICON-BUTTONS-unsigned.ipa
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: POST-VOID-iOS-v7-RUNTIMEFIX-ICON-BUTTONS
-          path: out/POST-VOID-iOS-v7-RUNTIMEFIX-ICON-BUTTONS-unsigned.ipa
+          name: POST-VOID-iOS-v8-PRELOADFIX-ICON-BUTTONS
+          path: out/POST-VOID-iOS-v8-PRELOADFIX-ICON-BUTTONS-unsigned.ipa
           if-no-files-found: error
           compression-level: 0
 
