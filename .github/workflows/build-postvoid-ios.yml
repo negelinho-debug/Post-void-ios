@@ -215,6 +215,13 @@ jobs:
 
           root = Path('work/Butterscotch')
 
+          def replace(path, old, new, count=1):
+              p = root / path
+              s = p.read_text()
+              if old not in s:
+                  raise SystemExit(f'Patch anchor missing in {path}: {old[:100]!r}')
+              p.write_text(s.replace(old, new, count))
+
           replace(
               'CMakeLists.txt',
               'project(butterscotch C)',
@@ -224,13 +231,6 @@ jobs:
           project(butterscotch C)
           endif()''',
           )
-
-          def replace(path, old, new, count=1):
-              p = root / path
-              s = p.read_text()
-              if old not in s:
-                  raise SystemExit(f'Patch anchor missing in {path}: {old[:100]!r}')
-              p.write_text(s.replace(old, new, count))
 
           # ----------------------------------------------------------
           # 1. Tell the OpenGL renderer to use iOS OpenGL ES headers.
@@ -1193,7 +1193,7 @@ jobs:
 
           cp -R "$APP" work/Payload/PostVoid.app
 
-          rm -f out/POST-VOID-iOS-v4-GLFIX-ICON-BUTTONS-unsigned.ipa
+          rm -f out/POST-VOID-iOS-v5-FIXED-ICON-BUTTONS-unsigned.ipa
 
           ditto \
             -c \
@@ -1201,18 +1201,18 @@ jobs:
             --sequesterRsrc \
             --keepParent \
             work/Payload \
-            out/POST-VOID-iOS-v4-GLFIX-ICON-BUTTONS-unsigned.ipa
+            out/POST-VOID-iOS-v5-FIXED-ICON-BUTTONS-unsigned.ipa
 
-          test -s out/POST-VOID-iOS-v4-GLFIX-ICON-BUTTONS-unsigned.ipa
+          test -s out/POST-VOID-iOS-v5-FIXED-ICON-BUTTONS-unsigned.ipa
 
           echo "IPA ready:"
-          ls -lh out/POST-VOID-iOS-v4-GLFIX-ICON-BUTTONS-unsigned.ipa
+          ls -lh out/POST-VOID-iOS-v5-FIXED-ICON-BUTTONS-unsigned.ipa
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: POST-VOID-iOS-v4-GLFIX-ICON-BUTTONS
-          path: out/POST-VOID-iOS-v4-GLFIX-ICON-BUTTONS-unsigned.ipa
+          name: POST-VOID-iOS-v5-FIXED-ICON-BUTTONS
+          path: out/POST-VOID-iOS-v5-FIXED-ICON-BUTTONS-unsigned.ipa
           if-no-files-found: error
           compression-level: 0
 
