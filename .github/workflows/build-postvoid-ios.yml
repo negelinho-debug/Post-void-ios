@@ -8,15 +8,11 @@ permissions:
 
 jobs:
   build:
-    name: Build POST VOID iOS
+    name: Build POST VOID iOS IPA
     runs-on: macos-15
     timeout-minutes: 90
 
     steps:
-      # ============================================================
-      # 1. REPOSITORY
-      # ============================================================
-
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -27,424 +23,746 @@ jobs:
           xcrun --sdk iphoneos --show-sdk-version
           clang --version
 
-      # ============================================================
-      # 2. DOWNLOAD OUR POST VOID APK FROM RELEASE
-      # ============================================================
+      - name: Prepare folders
+        run: |
+          set -e
+          mkdir -p input work logs out
 
-      - name: Download POST VOID APK from Release
+      - name: Download full POST VOID APK from Release
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
 
-          mkdir -p "$GITHUB_WORKSPACE/input"
-          mkdir -p "$GITHUB_WORKSPACE/work"
-          mkdir -p "$GITHUB_WORKSPACE/logs"
-          mkdir -p "$GITHUB_WORKSPACE/out"
+          echo "Searching Releases for an APK..."
 
-          echo "Searching GitHub Releases..."
+          TAG=""
+          while IFS= read -r tag; do
+            [ -z "$tag" ] && continue
 
-          TAG="$(
+            if gh release view "$tag" \
+              --json assets \
+              --jq '.assets[].name' \
+              | grep -Eiq '\.apk$'; then
+              TAG="$tag"
+              break
+            fi
+          done < <(
             gh release list \
-              --limit 1 \
+              --limit 50 \
               --json tagName \
-              --jq '.[0].tagName'
-          )"
+              --jq '.[].tagName'
+          )
 
           if [ -z "$TAG" ]; then
-            echo "ERROR: No GitHub Release found."
+            echo "ERROR: No Release containing an APK was found."
             exit 1
           fi
 
-          echo "Release: $TAG"
+          echo "Using Release: $TAG"
 
-          echo "Release assets:"
-          gh release view "$TAG" \
-            --json assets \
-            --jq '.assets[].name'
+          rm -rf input/apks
+          mkdir -p input/apks
 
           gh release download "$TAG" \
             --pattern "*.apk" \
-            --dir "$GITHUB_WORKSPACE/input" \
+            --dir input/apks \
             --clobber
 
-          APK="$(
-            find "$GITHUB_WORKSPACE/input" \
-              -type f \
-              -iname "*.apk" \
-              | head -n 1
+          APK="$(python3 - <<'PY'
+          from pathlib import Path
+          files = list(Path('input/apks').glob('*.apk'))
+          if not files:
+              raise SystemExit(1)
+          print(max(files, key=lambda p: p.stat().st_size))
+          PY
           )"
 
-          if [ -z "$APK" ]; then
-            echo "ERROR: APK not found in Release."
-            exit 1
-          fi
-
           if [ ! -f "$APK" ]; then
-            echo "ERROR: APK path is invalid."
+            echo "ERROR: APK download failed."
             exit 1
           fi
 
-          echo "APK=$APK" >> "$GITHUB_ENV"
-
-          echo "======================================"
-          echo "POST VOID APK FOUND"
-          echo "======================================"
-
+          SIZE="$(stat -f%z "$APK")"
+          echo "APK: $APK"
           ls -lh "$APK"
 
-      # ============================================================
-      # 3. EXTRACT ANDROID PORT
-      # ============================================================
+          if [ "$SIZE" -lt 100000000 ]; then
+            echo "ERROR: The APK is smaller than 100 MB."
+            echo "It looks like the BYOD build, not the full POST VOID package."
+            exit 1
+          fi
+
+          echo "APK=$GITHUB_WORKSPACE/$APK" >> "$GITHUB_ENV"
 
       - name: Extract Android port
         shell: bash
         run: |
           set -euo pipefail
 
-          mkdir -p work/apk
+          rm -rf work/apk work/game_data work/game
+          rm -f work/data0.zip work/game_data.apk
 
-          unzip -q "$APK" -d work/apk
+          # Extract ONLY assets/data0 directly from the APK.
+          # The APK contains duplicate resource paths, so extracting the whole
+          # archive with unzip can stop on an interactive overwrite prompt.
+          unzip -p "$APK" assets/data0 > work/data0.zip
 
-          echo "APK extracted."
+          test -s work/data0.zip
 
-          echo "Top-level:"
-          ls -la work/apk
-
-          echo "Assets:"
-          find work/apk/assets \
-            -maxdepth 2 \
-            -type f \
-            -print 2>/dev/null \
-            | head -100 || true
-
-          echo "Native libraries:"
-          find work/apk/lib \
-            -type f \
-            -print 2>/dev/null || true
-
-      # ============================================================
-      # 4. EXTRACT EMBEDDED GAME APK / GAME.DROID
-      # ============================================================
+          echo "POST VOID data0 extracted:"
+          ls -lh work/data0.zip
 
       - name: Find embedded game data
         shell: bash
         run: |
           set -euo pipefail
 
-          mkdir -p work/data0
-          mkdir -p work/gameapk
+          unzip -p work/data0.zip \
+            files/game_data.apk \
+            > work/game_data.apk
+
+          test -s work/game_data.apk
+
+          rm -rf work/game_data
+          mkdir -p work/game_data
+
+          unzip -oq work/game_data.apk \
+            -d work/game_data
+
+          test -f work/game_data/assets/game.droid
+
+          rm -rf work/game
           mkdir -p work/game
+          cp -R work/game_data/assets/. work/game/
 
-          DATA0="$GITHUB_WORKSPACE/work/apk/assets/data0"
+          python3 - <<'PY'
+          from pathlib import Path
 
-          if [ ! -f "$DATA0" ]; then
-            echo "ERROR: assets/data0 not found."
-            echo
-            echo "Available assets:"
-            find work/apk/assets \
-              -maxdepth 3 \
-              -type f \
-              -print || true
-            exit 1
-          fi
+          p = Path('work/game/game.droid')
+          data = p.read_bytes()[:4]
+          print('game.droid header:', data)
 
-          echo "Found data0:"
-          ls -lh "$DATA0"
+          if data != b'FORM':
+              raise SystemExit('ERROR: game.droid is not a valid GameMaker data package')
+          PY
 
-          cp "$DATA0" work/data0/data0.zip
-
-          echo "Extracting data0..."
-
-          unzip -q \
-            work/data0/data0.zip \
-            -d work/data0/unpacked
-
-          echo "Contents:"
-          find work/data0/unpacked \
-            -maxdepth 4 \
-            -type f \
-            -print
-
-          GAME_APK="$(
-            find work/data0/unpacked \
-              -type f \
-              -name "game_data.apk" \
-              | head -n 1
-          )"
-
-          if [ -z "$GAME_APK" ]; then
-            GAME_APK="$(
-              find work/data0/unpacked \
-                -type f \
-                -name "*.apk" \
-                | head -n 1
-            )"
-          fi
-
-          if [ -z "$GAME_APK" ]; then
-            echo "ERROR: Embedded game APK not found."
-            exit 1
-          fi
-
-          echo "Embedded game APK:"
-          ls -lh "$GAME_APK"
-
-          unzip -q "$GAME_APK" \
-            -d work/gameapk
-
-          echo "Searching for game.droid..."
-
-          GAME_DROID="$(
-            find work/gameapk \
-              -type f \
-              -name "game.droid" \
-              | head -n 1
-          )"
-
-          if [ -z "$GAME_DROID" ]; then
-            echo "ERROR: game.droid not found."
-            find work/gameapk \
-              -maxdepth 4 \
-              -type f \
-              -print \
-              | head -200
-            exit 1
-          fi
-
-          echo "GAME_DROID=$GAME_DROID" \
-            >> "$GITHUB_ENV"
-
-          echo "======================================"
-          echo "POST VOID GAME PACKAGE FOUND"
-          echo "======================================"
-
-          ls -lh "$GAME_DROID"
-
-          file "$GAME_DROID"
-
-          echo "Copying complete game assets..."
-
-          if [ -d work/gameapk/assets ]; then
-            cp -R \
-              work/gameapk/assets/. \
-              work/game/
-          fi
-
-          cp "$GAME_DROID" \
-            work/game/game.droid
-
-          echo
-          echo "Final game data:"
+          echo "Embedded full game data found:"
           du -sh work/game
-          find work/game \
-            -maxdepth 2 \
-            -type f \
-            -print \
-            | head -100
+          ls -lh work/game/game.droid
+          find work/game -maxdepth 2 -type f -print
 
-      # ============================================================
-      # 5. GET BUTTERSCOTCH GAMEMAKER RUNNER
-      # ============================================================
-
-      - name: Clone GameMaker runner
+      - name: Get Butterscotch GameMaker runner
         shell: bash
         run: |
           set -euo pipefail
 
+          rm -rf work/Butterscotch
+
           git clone \
-            --depth 1 \
             https://github.com/ButterscotchRunner/Butterscotch.git \
             work/Butterscotch
 
-          cd work/Butterscotch
+          git -C work/Butterscotch \
+            checkout d05526846e75449295ed2596bd86e9db0108408a
 
-          git submodule update \
-            --init \
-            --recursive
+          git -C work/Butterscotch \
+            submodule update --init --recursive
 
-          echo "Butterscotch downloaded."
+          rm -rf work/Butterscotch/vendor/SDL2
 
-          git log -1 --oneline
+          git clone \
+            --depth 1 \
+            --branch release-2.32.10 \
+            https://github.com/libsdl-org/SDL.git \
+            work/Butterscotch/vendor/SDL2
 
-      # ============================================================
-      # 6. CREATE iOS BOOTSTRAP
-      # ============================================================
-
-      - name: Create iOS bootstrap
+      - name: Create iOS runner project
         shell: bash
         run: |
           set -euo pipefail
 
-          mkdir -p work/ios
+          python3 <<'PY'
+          from pathlib import Path
+          import textwrap
 
-          cat > work/ios/main.m <<'EOF'
-          #import <UIKit/UIKit.h>
-          #import <Foundation/Foundation.h>
-          #import <QuartzCore/QuartzCore.h>
-          #import <OpenGLES/ES3/gl.h>
-          #import <OpenGLES/ES3/glext.h>
+          root = Path('work/Butterscotch')
 
-          @interface PostVoidView : UIView
-          @end
+          def replace(path, old, new, count=1):
+              p = root / path
+              s = p.read_text()
+              if old not in s:
+                  raise SystemExit(f'Patch anchor missing in {path}: {old[:100]!r}')
+              p.write_text(s.replace(old, new, count))
 
-          @implementation PostVoidView
+          # ----------------------------------------------------------
+          # 1. Tell the OpenGL renderer to use iOS OpenGL ES headers.
+          # ----------------------------------------------------------
+          for rel in [
+              'src/gl_common/gl_common.h',
+              'src/gl/gl_renderer.h',
+              'src/gl/gl_renderer.c',
+          ]:
+              replace(
+                  rel,
+                  '#if defined(__EMSCRIPTEN__) || defined(__ANDROID__) || defined(__SWITCH__)\n#include <GLES3/gl3.h>',
+                  '#if defined(PLATFORM_IOS)\n#include <OpenGLES/ES3/gl.h>\n#elif defined(__EMSCRIPTEN__) || defined(__ANDROID__) || defined(__SWITCH__)\n#include <GLES3/gl3.h>',
+              )
 
-          + (Class)layerClass
-          {
-              return [CAEAGLLayer class];
+          replace(
+              'src/gl/gl_renderer.c',
+              '#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !defined(__VITA__) && !defined(__SWITCH__)',
+              '#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !defined(__VITA__) && !defined(__SWITCH__) && !defined(PLATFORM_IOS)',
+              count=2,
+          )
+
+          replace(
+              'src/loop.c',
+              '!defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !defined(PLATFORM_PS3) && !defined(PLATFORM_VITA) && !defined(__SWITCH__)',
+              '!defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !defined(PLATFORM_IOS) && !defined(PLATFORM_PS3) && !defined(PLATFORM_VITA) && !defined(__SWITCH__)',
+          )
+
+          # ----------------------------------------------------------
+          # 2. Build SDL2 inside the same Xcode project on iOS.
+          # ----------------------------------------------------------
+          replace(
+              'CMakeLists.txt',
+              '''    elseif(BACKEND STREQUAL "sdl2")
+                  add_compile_definitions(USE_SDL2)
+
+                  find_package(PkgConfig REQUIRED)
+                  pkg_check_modules(SDL2 REQUIRED sdl2)
+                  target_include_directories(butterscotch PRIVATE ${SDL2_INCLUDE_DIRS})
+                  target_link_directories(butterscotch PRIVATE ${SDL2_LIBRARY_DIRS})
+                  set(BACKEND_LIBRARIES ${SDL2_LIBRARIES})''',
+              '''    elseif(BACKEND STREQUAL "sdl2")
+                  add_compile_definitions(USE_SDL2)
+
+                  if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+                      set(SDL_SHARED OFF CACHE BOOL "" FORCE)
+                      set(SDL_STATIC ON CACHE BOOL "" FORCE)
+                      set(SDL_TEST OFF CACHE BOOL "" FORCE)
+                      set(SDL_TESTS OFF CACHE BOOL "" FORCE)
+                      set(SDL2_DISABLE_INSTALL ON CACHE BOOL "" FORCE)
+
+                      add_subdirectory(vendor/SDL2 EXCLUDE_FROM_ALL)
+
+                      set(BACKEND_LIBRARIES
+                          SDL2::SDL2-static
+                          SDL2::SDL2main
+                      )
+                  else()
+                      find_package(PkgConfig REQUIRED)
+                      pkg_check_modules(SDL2 REQUIRED sdl2)
+                      target_include_directories(butterscotch PRIVATE ${SDL2_INCLUDE_DIRS})
+                      target_link_directories(butterscotch PRIVATE ${SDL2_LIBRARY_DIRS})
+                      set(BACKEND_LIBRARIES ${SDL2_LIBRARIES})
+                  endif()''',
+          )
+
+          # GLAD is for desktop OpenGL. iPhone uses GLES directly.
+          replace(
+              'CMakeLists.txt',
+              'if(NOT PLATFORM STREQUAL "vita" AND NOT PLATFORM STREQUAL "switch")\n        # GLAD',
+              'if(NOT PLATFORM STREQUAL "vita" AND NOT PLATFORM STREQUAL "switch" AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")\n        # GLAD',
+          )
+
+          # ----------------------------------------------------------
+          # 3. Turn the executable into an iPhone .app bundle.
+          # ----------------------------------------------------------
+          replace(
+              'CMakeLists.txt',
+              'target_include_directories(butterscotch PRIVATE src/${PLATFORM})',
+              '''target_include_directories(butterscotch PRIVATE src/${PLATFORM})
+
+          if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+              target_compile_definitions(
+                  butterscotch PRIVATE
+                  PLATFORM_IOS
+              )
+
+              set_target_properties(
+                  butterscotch PROPERTIES
+                  MACOSX_BUNDLE TRUE
+                  OUTPUT_NAME "PostVoid"
+                  MACOSX_BUNDLE_INFO_PLIST "${CMAKE_SOURCE_DIR}/ios/Info.plist"
+                  XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "com.ourports.postvoid"
+                  XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "1,2"
+                  XCODE_ATTRIBUTE_IPHONEOS_DEPLOYMENT_TARGET "15.0"
+                  XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED "NO"
+                  XCODE_ATTRIBUTE_CODE_SIGNING_REQUIRED "NO"
+                  XCODE_ATTRIBUTE_ENABLE_BITCODE "NO"
+                  XCODE_ATTRIBUTE_ONLY_ACTIVE_ARCH "NO"
+              )
+
+              target_link_options(
+                  butterscotch PRIVATE
+                  "-ObjC"
+              )
+
+              target_link_libraries(
+                  butterscotch PRIVATE
+                  "-framework UIKit"
+                  "-framework Foundation"
+                  "-framework CoreFoundation"
+                  "-framework CoreGraphics"
+                  "-framework QuartzCore"
+                  "-framework OpenGLES"
+                  "-framework CoreAudio"
+                  "-framework AudioToolbox"
+                  "-framework AVFoundation"
+                  "-framework GameController"
+                  "-framework CoreMotion"
+              )
+          endif()''',
+          )
+
+          # ----------------------------------------------------------
+          # 4. iOS main(): load bundled game.droid and save to Documents.
+          # ----------------------------------------------------------
+          main_c = r'''
+          #include <SDL2/SDL.h>
+          #include <SDL2/SDL_main.h>
+          #include <loop.h>
+
+          #include <limits.h>
+          #include <stdio.h>
+          #include <stdlib.h>
+          #include <string.h>
+          #include <sys/stat.h>
+          #include <unistd.h>
+
+          static void ensureDir(const char *path) {
+              if (path && path[0])
+                  mkdir(path, 0755);
           }
 
-          - (instancetype)initWithFrame:(CGRect)frame
-          {
-              self = [super initWithFrame:frame];
+          int main(int argc, char **argv) {
+              (void)argc;
 
-              if (self)
-              {
-                  self.multipleTouchEnabled = YES;
-                  self.backgroundColor =
-                      [UIColor blackColor];
+              setbuf(stdout, NULL);
+              setbuf(stderr, NULL);
+
+              SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");
+              SDL_SetHint(SDL_HINT_MOUSE_TOUCH_EVENTS, "0");
+
+              char *base = SDL_GetBasePath();
+              if (!base)
+                  return 20;
+
+              if (chdir(base) != 0) {
+                  SDL_free(base);
+                  return 21;
               }
 
-              return self;
-          }
-
-          @end
-
-
-          @interface PostVoidViewController :
-              UIViewController
-          @end
-
-
-          @implementation PostVoidViewController
-
-          - (void)loadView
-          {
-              CGRect frame =
-                  [UIScreen mainScreen].bounds;
-
-              self.view =
-                  [[PostVoidView alloc]
-                      initWithFrame:frame];
-          }
-
-          - (BOOL)prefersStatusBarHidden
-          {
-              return YES;
-          }
-
-          - (UIInterfaceOrientationMask)
-              supportedInterfaceOrientations
-          {
-              return
-                  UIInterfaceOrientationMaskLandscape;
-          }
-
-          @end
-
-
-          @interface AppDelegate :
-              UIResponder
-              <UIApplicationDelegate>
-          @property(
-              strong,
-              nonatomic
-          ) UIWindow *window;
-          @end
-
-
-          @implementation AppDelegate
-
-          - (BOOL)application:
-              (UIApplication *)application
-              didFinishLaunchingWithOptions:
-              (NSDictionary *)launchOptions
-          {
-              NSLog(
-                  @"POST VOID iOS bootstrap starting"
+              char gamePath[PATH_MAX];
+              snprintf(
+                  gamePath,
+                  sizeof(gamePath),
+                  "%sgame.droid",
+                  base
               );
 
-              NSString *bundle =
-                  [[NSBundle mainBundle]
-                      bundlePath];
+              const char *home = getenv("HOME");
 
-              NSString *game =
-                  [bundle
-                      stringByAppendingPathComponent:
-                      @"game.droid"];
+              char docsPath[PATH_MAX];
+              char savePath[PATH_MAX];
+              char logPath[PATH_MAX];
 
-              BOOL exists =
-                  [[NSFileManager defaultManager]
-                      fileExistsAtPath:game];
-
-              NSLog(
-                  @"game.droid path: %@",
-                  game
+              snprintf(
+                  docsPath,
+                  sizeof(docsPath),
+                  "%s/Documents",
+                  home ? home : "."
               );
 
-              NSLog(
-                  @"game.droid exists: %@",
-                  exists ? @"YES" : @"NO"
+              ensureDir(docsPath);
+
+              snprintf(
+                  savePath,
+                  sizeof(savePath),
+                  "%s/Documents/PostVoid",
+                  home ? home : "."
               );
 
-              self.window =
-                  [[UIWindow alloc]
-                      initWithFrame:
-                      [UIScreen mainScreen].bounds];
+              ensureDir(savePath);
 
-              PostVoidViewController *vc =
-                  [PostVoidViewController new];
+              snprintf(
+                  logPath,
+                  sizeof(logPath),
+                  "%s/runtime.log",
+                  savePath
+              );
 
-              self.window.rootViewController =
-                  vc;
+              freopen(logPath, "a", stdout);
+              freopen(logPath, "a", stderr);
 
-              [self.window makeKeyAndVisible];
+              fprintf(stderr, "=== POST VOID iOS ===\n");
+              fprintf(stderr, "base: %s\n", base);
+              fprintf(stderr, "game: %s\n", gamePath);
+              fprintf(stderr, "save: %s\n", savePath);
 
-              return YES;
+              if (access(gamePath, R_OK) != 0) {
+                  fprintf(stderr, "ERROR: game.droid is missing\n");
+                  SDL_free(base);
+                  return 22;
+              }
+
+              CommandLineArgs args = {0};
+
+              args.dataWinPath = gamePath;
+              args.saveFolder = savePath;
+              args.exitAtFrame = -1;
+
+          #ifdef ENABLE_VM_TRACING
+              args.traceBytecodeAfterFrame = 0;
+          #endif
+
+              args.speedMultiplier = 1.0;
+              args.fastForwardSpeed = 0.0;
+              args.osType = OS_ANDROID;
+              args.windowWidth = 1280;
+              args.windowHeight = 720;
+              args.widescreenAspect = 16.0f / 9.0f;
+              args.profilerFramesBetween = 0;
+              args.loadType = DATAWINLOADTYPE_LOAD_PER_CHUNK;
+              args.lazyRooms = true;
+              args.lazyTextures = true;
+              args.lazyAudio = true;
+              args.renderer = MODERN_GL;
+              args.disableLogColours = true;
+              args.alwaysLogUnknownFunctions = true;
+
+          #ifdef ENABLE_VM_STUB_LOGS
+              args.alwaysLogStubbedFunctions = true;
+          #endif
+
+              int ret = loop(args, argv[0]);
+
+              freeCommandLineArgs(&args);
+
+              fprintf(stderr, "runner exited: %d\n", ret);
+
+              SDL_free(base);
+              return ret;
           }
+          '''
 
-          @end
-
-
-          int main(
-              int argc,
-              char *argv[]
+          (root / 'src/cli/main.c').write_text(
+              textwrap.dedent(main_c).lstrip()
           )
-          {
-              @autoreleasepool
-              {
-                  return UIApplicationMain(
-                      argc,
-                      argv,
-                      nil,
-                      NSStringFromClass(
-                          [AppDelegate class]
-                      )
+
+          # ----------------------------------------------------------
+          # 5. Invisible touch gamepad:
+          #    left half = movement
+          #    right half = aim
+          #    bottom-right = shoot (RT)
+          #    button next to it = A/action
+          #    top-right = Start/pause
+          # ----------------------------------------------------------
+          p = root / 'src/backends/sdl2.c'
+          s = p.read_text()
+
+          anchor = 'static SDL_GameController* openControllers[MAX_GAMEPADS];\n'
+          if anchor not in s:
+              raise SystemExit('Touch patch anchor 1 missing')
+
+          touch_state = r'''
+
+          #ifdef PLATFORM_IOS
+
+          typedef struct {
+              bool active;
+              SDL_FingerID id;
+              float startX;
+              float startY;
+              float x;
+              float y;
+          } IOSTouchStick;
+
+          typedef struct {
+              bool active;
+              SDL_FingerID id;
+          } IOSTouchButton;
+
+          static IOSTouchStick iosLeft = {0};
+          static IOSTouchStick iosRight = {0};
+
+          static IOSTouchButton iosFire = {0};
+          static IOSTouchButton iosAction = {0};
+          static IOSTouchButton iosExtra = {0};
+          static IOSTouchButton iosPause = {0};
+
+          static float iosClamp(float value) {
+              if (value < -1.0f) return -1.0f;
+              if (value > 1.0f) return 1.0f;
+              return value;
+          }
+
+          static void iosStartStick(
+              IOSTouchStick *stick,
+              SDL_FingerID id,
+              float x,
+              float y
+          ) {
+              stick->active = true;
+              stick->id = id;
+              stick->startX = x;
+              stick->startY = y;
+              stick->x = x;
+              stick->y = y;
+          }
+
+          static void iosFingerDown(
+              const SDL_TouchFingerEvent *f
+          ) {
+              float x = f->x;
+              float y = f->y;
+
+              if (x > 0.88f && y < 0.20f && !iosPause.active) {
+                  iosPause.active = true;
+                  iosPause.id = f->fingerId;
+                  return;
+              }
+
+              if (x > 0.82f && y > 0.62f && !iosFire.active) {
+                  iosFire.active = true;
+                  iosFire.id = f->fingerId;
+                  return;
+              }
+
+              if (
+                  x > 0.68f && x <= 0.82f &&
+                  y > 0.68f &&
+                  !iosAction.active
+              ) {
+                  iosAction.active = true;
+                  iosAction.id = f->fingerId;
+                  return;
+              }
+
+              if (
+                  x > 0.55f && x <= 0.68f &&
+                  y > 0.72f &&
+                  !iosExtra.active
+              ) {
+                  iosExtra.active = true;
+                  iosExtra.id = f->fingerId;
+                  return;
+              }
+
+              if (x < 0.46f && !iosLeft.active) {
+                  iosStartStick(
+                      &iosLeft,
+                      f->fingerId,
+                      x,
+                      y
+                  );
+                  return;
+              }
+
+              if (!iosRight.active) {
+                  iosStartStick(
+                      &iosRight,
+                      f->fingerId,
+                      x,
+                      y
                   );
               }
           }
-          EOF
 
-      # ============================================================
-      # 7. INFO.PLIST
-      # ============================================================
+          static void iosFingerMotion(
+              const SDL_TouchFingerEvent *f
+          ) {
+              if (iosLeft.active && iosLeft.id == f->fingerId) {
+                  iosLeft.x = f->x;
+                  iosLeft.y = f->y;
+              }
 
-      - name: Create Info.plist
-        shell: bash
-        run: |
-          set -euo pipefail
+              if (iosRight.active && iosRight.id == f->fingerId) {
+                  iosRight.x = f->x;
+                  iosRight.y = f->y;
+              }
+          }
 
-          cat > work/ios/Info.plist <<'EOF'
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC
-          "-//Apple//DTD PLIST 1.0//EN"
-          "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          static void iosFingerUp(
+              const SDL_TouchFingerEvent *f
+          ) {
+              if (iosLeft.active && iosLeft.id == f->fingerId)
+                  iosLeft.active = false;
 
+              if (iosRight.active && iosRight.id == f->fingerId)
+                  iosRight.active = false;
+
+              if (iosFire.active && iosFire.id == f->fingerId)
+                  iosFire.active = false;
+
+              if (iosAction.active && iosAction.id == f->fingerId)
+                  iosAction.active = false;
+
+              if (iosExtra.active && iosExtra.id == f->fingerId)
+                  iosExtra.active = false;
+
+              if (iosPause.active && iosPause.id == f->fingerId)
+                  iosPause.active = false;
+          }
+
+          static void iosApplyTouchGamepad(void) {
+              bool hasPhysicalController = false;
+
+              for (int i = 0; i < MAX_GAMEPADS; i++) {
+                  if (
+                      openControllers[i] &&
+                      SDL_GameControllerGetAttached(openControllers[i])
+                  ) {
+                      hasPhysicalController = true;
+                      break;
+                  }
+              }
+
+              if (hasPhysicalController)
+                  return;
+
+              GamepadSlot *slot = &g_runner->gamepads->slots[0];
+
+              slot->connected = true;
+              slot->jid = 0;
+
+              strncpy(
+                  slot->description,
+                  "POST VOID iOS Touch",
+                  sizeof(slot->description) - 1
+              );
+              slot->description[sizeof(slot->description) - 1] = '\0';
+
+              strncpy(
+                  slot->guid,
+                  "postvoid-ios-touch",
+                  sizeof(slot->guid) - 1
+              );
+              slot->guid[sizeof(slot->guid) - 1] = '\0';
+
+              const float radius = 0.105f;
+
+              if (iosLeft.active) {
+                  slot->axisValue[0] = iosClamp(
+                      (iosLeft.x - iosLeft.startX) / radius
+                  );
+                  slot->axisValue[1] = iosClamp(
+                      (iosLeft.y - iosLeft.startY) / radius
+                  );
+              }
+
+              if (iosRight.active) {
+                  slot->axisValue[2] = iosClamp(
+                      (iosRight.x - iosRight.startX) / radius
+                  );
+                  slot->axisValue[3] = iosClamp(
+                      (iosRight.y - iosRight.startY) / radius
+                  );
+              }
+
+              /* A / X / RT / Start */
+              slot->buttonDown[0] = iosAction.active;
+              slot->buttonDown[2] = iosExtra.active;
+              slot->buttonDown[7] = iosFire.active;
+              slot->buttonDown[9] = iosPause.active;
+
+              slot->buttonValue[0] = iosAction.active ? 1.0f : 0.0f;
+              slot->buttonValue[2] = iosExtra.active ? 1.0f : 0.0f;
+              slot->buttonValue[7] = iosFire.active ? 1.0f : 0.0f;
+              slot->buttonValue[9] = iosPause.active ? 1.0f : 0.0f;
+
+              for (int btn = 0; btn < GP_BUTTON_COUNT; btn++) {
+                  bool wasDown = slot->buttonDownPrev[btn];
+
+                  if (slot->buttonDown[btn] && !wasDown)
+                      slot->buttonPressed[btn] = true;
+
+                  if (!slot->buttonDown[btn] && wasDown)
+                      slot->buttonReleased[btn] = true;
+              }
+
+              g_runner->gamepads->connectedCount = 1;
+          }
+
+          #endif
+          '''
+
+          s = s.replace(
+              anchor,
+              anchor + textwrap.dedent(touch_state),
+              1,
+          )
+
+          event_anchor = '''            case SDL_MOUSEWHEEL:
+                          if (e.wheel.y != 0)
+                              RunnerMouse_onWheel(g_runner->mouse, (float)e.wheel.y);
+                          break;'''
+
+          if event_anchor not in s:
+              raise SystemExit('Touch patch anchor 2 missing')
+
+          event_replacement = event_anchor + r'''
+          #ifdef PLATFORM_IOS
+                      case SDL_FINGERDOWN:
+                          iosFingerDown(&e.tfinger);
+                          break;
+
+                      case SDL_FINGERMOTION:
+                          iosFingerMotion(&e.tfinger);
+                          break;
+
+                      case SDL_FINGERUP:
+                          iosFingerUp(&e.tfinger);
+                          break;
+          #endif
+          '''
+
+          s = s.replace(
+              event_anchor,
+              event_replacement,
+              1,
+          )
+
+          end_anchor = '''    }
+
+              return false;
+          #endif
+          }'''
+
+          if end_anchor not in s:
+              raise SystemExit('Touch patch anchor 3 missing')
+
+          end_replacement = '''    }
+
+          #ifdef PLATFORM_IOS
+              iosApplyTouchGamepad();
+          #endif
+
+              return false;
+          #endif
+          }'''
+
+          s = s.replace(
+              end_anchor,
+              end_replacement,
+              1,
+          )
+
+          p.write_text(s)
+
+          # ----------------------------------------------------------
+          # 6. iPhone Info.plist.
+          # ----------------------------------------------------------
+          ios = root / 'ios'
+          ios.mkdir(exist_ok=True)
+
+          plist = r'''<?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
           <dict>
-
               <key>CFBundleDevelopmentRegion</key>
               <string>en</string>
 
@@ -452,10 +770,10 @@ jobs:
               <string>POST VOID</string>
 
               <key>CFBundleExecutable</key>
-              <string>PostVoid</string>
+              <string>$(EXECUTABLE_NAME)</string>
 
               <key>CFBundleIdentifier</key>
-              <string>com.ourports.postvoid</string>
+              <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 
               <key>CFBundleInfoDictionaryVersion</key>
               <string>6.0</string>
@@ -489,15 +807,14 @@ jobs:
 
               <key>UISupportedInterfaceOrientations</key>
               <array>
+                  <string>UIInterfaceOrientationLandscapeLeft</string>
+                  <string>UIInterfaceOrientationLandscapeRight</string>
+              </array>
 
-                  <string>
-                  UIInterfaceOrientationLandscapeLeft
-                  </string>
-
-                  <string>
-                  UIInterfaceOrientationLandscapeRight
-                  </string>
-
+              <key>UISupportedInterfaceOrientations~ipad</key>
+              <array>
+                  <string>UIInterfaceOrientationLandscapeLeft</string>
+                  <string>UIInterfaceOrientationLandscapeRight</string>
               </array>
 
               <key>UIFileSharingEnabled</key>
@@ -511,132 +828,103 @@ jobs:
 
               <key>UILaunchScreen</key>
               <dict/>
-
           </dict>
           </plist>
-          EOF
+          '''
 
-      # ============================================================
-      # 8. COMPILE REAL ARM64 iOS EXECUTABLE
-      # ============================================================
+          (ios / 'Info.plist').write_text(
+              textwrap.dedent(plist).lstrip()
+          )
 
-      - name: Compile ARM64 iOS bootstrap
+          print('iOS runner patch complete')
+          PY
+
+      - name: Configure ARM64 iOS runner
         shell: bash
         run: |
           set -euo pipefail
 
-          SDK="$(
-            xcrun \
-              --sdk iphoneos \
-              --show-sdk-path
+          rm -rf work/build
+
+          cmake \
+            -S work/Butterscotch \
+            -B work/build \
+            -G Xcode \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_SYSROOT=iphoneos \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0 \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DPLATFORM=cli \
+            -DBACKEND=sdl2 \
+            -DAUDIO_BACKEND=miniaudio \
+            -DENABLE_WAD14=ON \
+            -DENABLE_WAD16=ON \
+            -DENABLE_WAD17=ON \
+            -DENABLE_LEGACY_GL=OFF \
+            -DENABLE_MODERN_GL=ON \
+            -DENABLE_VM_GML_PROFILER=OFF \
+            -DENABLE_VM_TRACING=OFF \
+            -DENABLE_VM_OPCODE_PROFILER=OFF \
+            -DENABLE_VM_STUB_LOGS=ON \
+            -DENABLE_ASAN=OFF \
+            2>&1 | tee logs/configure.log
+
+      - name: Compile ARM64 iOS runner
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cmake \
+            --build work/build \
+            --config Release \
+            --target butterscotch \
+            2>&1 | tee logs/build.log
+
+          APP="$(
+            find work/build \
+              -type d \
+              -name 'PostVoid.app' \
+              | head -n 1
           )"
 
-          echo "SDK: $SDK"
+          if [ -z "$APP" ] || [ ! -d "$APP" ]; then
+            echo "ERROR: PostVoid.app was not produced."
+            find work/build -maxdepth 6 -type f | sort | tail -300
+            exit 1
+          fi
 
-          mkdir -p \
-            work/Payload/PostVoid.app
+          echo "APP=$APP" >> "$GITHUB_ENV"
 
-          xcrun \
-            --sdk iphoneos \
-            clang \
-            -arch arm64 \
-            -miphoneos-version-min=15.0 \
-            -fobjc-arc \
-            -isysroot "$SDK" \
-            work/ios/main.m \
-            -framework UIKit \
-            -framework Foundation \
-            -framework QuartzCore \
-            -framework OpenGLES \
-            -framework CoreGraphics \
-            -o \
-            work/Payload/PostVoid.app/PostVoid
+          echo "Built app: $APP"
+          ls -la "$APP"
 
-          echo "Executable:"
-          file \
-            work/Payload/PostVoid.app/PostVoid
-
-          lipo \
-            -info \
-            work/Payload/PostVoid.app/PostVoid
-
-      # ============================================================
-      # 9. ADD COMPLETE POST VOID GAME
-      # ============================================================
+          test -f "$APP/PostVoid"
+          file "$APP/PostVoid"
+          lipo -info "$APP/PostVoid" || true
 
       - name: Add complete POST VOID game data
         shell: bash
         run: |
           set -euo pipefail
 
-          APP="$GITHUB_WORKSPACE/work/Payload/PostVoid.app"
+          cp -R work/game/. "$APP/"
 
-          cp work/ios/Info.plist \
-            "$APP/Info.plist"
+          test -f "$APP/game.droid"
+          test -f "$APP/options.ini"
+          test -f "$APP/localization.json"
+          test -f "$APP/gamecontrollerdb.txt"
 
-          echo "Copying complete game package..."
-
-          cp -R \
-            work/game/. \
-            "$APP/"
-
-          if [ ! -f "$APP/game.droid" ]; then
-            echo "ERROR: game.droid missing from app."
-            exit 1
-          fi
-
-          echo "Game package:"
-          ls -lh "$APP/game.droid"
-
-          echo "Complete app size:"
+          echo "Final app contents:"
           du -sh "$APP"
-
-          echo "App files:"
-          find "$APP" \
-            -maxdepth 2 \
-            -type f \
-            -print \
-            | head -200
-
-      # ============================================================
-      # 10. CREATE DOCUMENTS README
-      # ============================================================
-
-      - name: Add diagnostics information
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          APP="$GITHUB_WORKSPACE/work/Payload/PostVoid.app"
-
-          cat > "$APP/PORT-INFO.txt" <<'EOF'
-          POST VOID iOS Port
-
-          Architecture:
-          arm64
-
-          Minimum iOS:
-          15.0
-
-          Game data:
-          game.droid
-
-          This build contains the extracted
-          POST VOID GameMaker game package.
-
-          Stage 1 runner bootstrap build.
-          EOF
-
-      # ============================================================
-      # 11. AD-HOC SIGN
-      # ============================================================
+          ls -lh "$APP/game.droid"
 
       - name: Ad-hoc sign
         shell: bash
         run: |
           set -euo pipefail
 
-          APP="$GITHUB_WORKSPACE/work/Payload/PostVoid.app"
+          xattr -cr "$APP" || true
 
           codesign \
             --force \
@@ -644,92 +932,45 @@ jobs:
             --timestamp=none \
             "$APP"
 
-          codesign \
-            -dvvv \
-            "$APP" \
-            2>&1 || true
-
-      # ============================================================
-      # 12. BUILD IPA
-      # ============================================================
+          codesign -vv "$APP"
 
       - name: Build IPA
         shell: bash
         run: |
           set -euo pipefail
 
-          mkdir -p out
+          rm -rf work/Payload
+          mkdir -p work/Payload
 
-          cd work
+          cp -R "$APP" work/Payload/PostVoid.app
 
-          zip \
-            -qry \
-            ../out/POST-VOID-iOS-v1.ipa \
-            Payload
+          rm -f out/POST-VOID-iOS-v2-FASTFIX-unsigned.ipa
 
-          cd ..
+          ditto \
+            -c \
+            -k \
+            --sequesterRsrc \
+            --keepParent \
+            work/Payload \
+            out/POST-VOID-iOS-v2-FASTFIX-unsigned.ipa
 
-          echo "======================================"
-          echo "IPA CREATED"
-          echo "======================================"
+          test -s out/POST-VOID-iOS-v2-FASTFIX-unsigned.ipa
 
-          ls -lh \
-            out/POST-VOID-iOS-v1.ipa
+          echo "IPA ready:"
+          ls -lh out/POST-VOID-iOS-v2-FASTFIX-unsigned.ipa
 
-          unzip -l \
-            out/POST-VOID-iOS-v1.ipa \
-            | head -100
-
-      # ============================================================
-      # 13. UPLOAD IPA
-      # ============================================================
-
-      - name: Upload POST VOID IPA
+      - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: POST-VOID-iOS-v1
-          path: out/POST-VOID-iOS-v1.ipa
+          name: POST-VOID-iOS-v2-FASTFIX
+          path: out/POST-VOID-iOS-v2-FASTFIX-unsigned.ipa
           if-no-files-found: error
           compression-level: 0
 
-      # ============================================================
-      # 14. DEBUG PACKAGE
-      # ============================================================
-
-      - name: Create diagnostics
-        if: always()
-        shell: bash
-        run: |
-          mkdir -p diagnostics
-
-          echo "POST VOID iOS build diagnostics" \
-            > diagnostics/info.txt
-
-          echo "" \
-            >> diagnostics/info.txt
-
-          echo "Runner: iOS ARM64 bootstrap" \
-            >> diagnostics/info.txt
-
-          echo "Game format: GameMaker game.droid" \
-            >> diagnostics/info.txt
-
-          if [ -n "${APK:-}" ]; then
-            echo "APK=$APK" \
-              >> diagnostics/info.txt
-          fi
-
-          find work \
-            -maxdepth 3 \
-            -type f \
-            -print \
-            > diagnostics/files.txt \
-            2>/dev/null || true
-
-      - name: Upload diagnostics
+      - name: Upload build logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: POST-VOID-iOS-diagnostics
-          path: diagnostics/
+          name: POST-VOID-iOS-build-logs
+          path: logs/
           if-no-files-found: ignore
