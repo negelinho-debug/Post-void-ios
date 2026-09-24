@@ -369,13 +369,13 @@ jobs:
           # internal __yy_sdf_shader fragment source with a simple compatible
           # shader. POST VOID's own gameplay shaders are left untouched.
           sdf_compile_anchor = '''        compileProgram(
-              gmlShader,
-              shdr->name,
-              vertexShaderSource,
-              fragmentShaderSource,
-              shdr->vertexAttributeCount,
-              shdr->vertexAttributes
-          );'''
+                      gmlShader,
+                      shdr->name,
+                      vertexShaderSource,
+                      fragmentShaderSource,
+                      shdr->vertexAttributeCount,
+                      shdr->vertexAttributes
+                  );'''
 
           sdf_compile_replacement = r'''#ifdef PLATFORM_IOS
                   if (
@@ -1445,7 +1445,7 @@ jobs:
 
           cp -R "$APP" work/Payload/PostVoid.app
 
-          rm -f out/POST-VOID-iOS-v9-BOOTFIX-ICON-BUTTONS-unsigned.ipa
+          rm -f out/POST-VOID-iOS-v10-ANCHORFIX-ICON-BUTTONS-unsigned.ipa
 
           ditto \
             -c \
@@ -1453,18 +1453,18 @@ jobs:
             --sequesterRsrc \
             --keepParent \
             work/Payload \
-            out/POST-VOID-iOS-v9-BOOTFIX-ICON-BUTTONS-unsigned.ipa
+            out/POST-VOID-iOS-v10-ANCHORFIX-ICON-BUTTONS-unsigned.ipa
 
-          test -s out/POST-VOID-iOS-v9-BOOTFIX-ICON-BUTTONS-unsigned.ipa
+          test -s out/POST-VOID-iOS-v10-ANCHORFIX-ICON-BUTTONS-unsigned.ipa
 
           echo "IPA ready:"
-          ls -lh out/POST-VOID-iOS-v9-BOOTFIX-ICON-BUTTONS-unsigned.ipa
+          ls -lh out/POST-VOID-iOS-v10-ANCHORFIX-ICON-BUTTONS-unsigned.ipa
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: POST-VOID-iOS-v9-BOOTFIX-ICON-BUTTONS
-          path: out/POST-VOID-iOS-v9-BOOTFIX-ICON-BUTTONS-unsigned.ipa
+          name: POST-VOID-iOS-v10-ANCHORFIX-ICON-BUTTONS
+          path: out/POST-VOID-iOS-v10-ANCHORFIX-ICON-BUTTONS-unsigned.ipa
           if-no-files-found: error
           compression-level: 0
 
