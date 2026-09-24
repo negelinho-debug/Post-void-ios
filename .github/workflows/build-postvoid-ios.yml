@@ -1,0 +1,261 @@
+name: Build POST VOID iOS
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show Xcode
+        run: |
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+
+      - name: Find uploaded POST VOID APK
+        id: apk
+        shell: bash
+        run: |
+          set -e
+
+          APK="$(find . -type f -iname "*.apk" | head -1)"
+
+          if [ -z "$APK" ]; then
+            echo "ERROR: Upload the POST VOID APK into this repository."
+            exit 1
+          fi
+
+          echo "Found: $APK"
+          echo "apk=$APK" >> "$GITHUB_OUTPUT"
+
+      - name: Extract Android port
+        shell: bash
+        run: |
+          set -e
+
+          mkdir -p work/apk
+          unzip -q "${{ steps.apk.outputs.apk }}" -d work/apk
+
+          echo "=== APK CONTENT ==="
+          find work/apk -maxdepth 3 -type f | head -200
+
+      - name: Find embedded game data
+        shell: bash
+        run: |
+          set -e
+
+          mkdir -p work/game
+
+          GAME_APK="$(find work/apk -type f -name "game_data.apk" | head -1)"
+
+          if [ -n "$GAME_APK" ]; then
+            echo "Found game_data.apk: $GAME_APK"
+            unzip -q "$GAME_APK" -d work/game
+          fi
+
+          GAME="$(find work -type f -name "game.droid" | head -1)"
+
+          if [ -z "$GAME" ]; then
+            echo "ERROR: game.droid not found."
+            find work -type f | sort
+            exit 1
+          fi
+
+          cp "$GAME" work/game.droid
+
+          echo "=== GAME DATA ==="
+          ls -lh work/game.droid
+
+      - name: Create iOS runner project
+        shell: bash
+        run: |
+          set -e
+
+          mkdir -p ios
+
+          cat > ios/main.m <<'EOF'
+          #import <UIKit/UIKit.h>
+
+          @interface PVViewController : UIViewController
+          @end
+
+          @implementation PVViewController
+
+          - (void)viewDidLoad {
+              [super viewDidLoad];
+
+              self.view.backgroundColor = UIColor.blackColor;
+
+              UILabel *label = [[UILabel alloc] initWithFrame:self.view.bounds];
+              label.autoresizingMask =
+                  UIViewAutoresizingFlexibleWidth |
+                  UIViewAutoresizingFlexibleHeight;
+
+              label.textAlignment = NSTextAlignmentCenter;
+              label.numberOfLines = 0;
+              label.textColor = UIColor.whiteColor;
+              label.font = [UIFont boldSystemFontOfSize:24];
+
+              NSString *game =
+                  [[NSBundle mainBundle] pathForResource:@"game"
+                                                 ofType:@"droid"];
+
+              if (game) {
+                  label.text =
+                    @"POST VOID iOS\n\nGame data loaded ✓\nRunner bootstrap ready";
+              } else {
+                  label.text =
+                    @"POST VOID iOS\n\ngame.droid missing";
+              }
+
+              [self.view addSubview:label];
+          }
+
+          - (BOOL)prefersStatusBarHidden {
+              return YES;
+          }
+
+          @end
+
+          @interface PVAppDelegate : UIResponder <UIApplicationDelegate>
+          @property(nonatomic,strong) UIWindow *window;
+          @end
+
+          @implementation PVAppDelegate
+
+          - (BOOL)application:(UIApplication *)application
+                  didFinishLaunchingWithOptions:(NSDictionary *)options {
+
+              self.window =
+                [[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
+
+              self.window.rootViewController =
+                [[PVViewController alloc] init];
+
+              [self.window makeKeyAndVisible];
+
+              return YES;
+          }
+
+          @end
+
+          int main(int argc, char *argv[]) {
+              @autoreleasepool {
+                  return UIApplicationMain(
+                      argc,
+                      argv,
+                      nil,
+                      NSStringFromClass(PVAppDelegate.class)
+                  );
+              }
+          }
+          EOF
+
+      - name: Compile ARM64 iOS bootstrap
+        shell: bash
+        run: |
+          set -e
+
+          SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
+
+          mkdir -p Payload/PostVoid.app
+
+          xcrun --sdk iphoneos clang \
+            -arch arm64 \
+            -miphoneos-version-min=15.0 \
+            -fobjc-arc \
+            -isysroot "$SDK" \
+            -framework UIKit \
+            -framework Foundation \
+            ios/main.m \
+            -o Payload/PostVoid.app/PostVoid
+
+      - name: Add complete POST VOID game data
+        shell: bash
+        run: |
+          set -e
+
+          cp work/game.droid Payload/PostVoid.app/game.droid
+
+          cat > Payload/PostVoid.app/Info.plist <<'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+          "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+
+            <key>CFBundleExecutable</key>
+            <string>PostVoid</string>
+
+            <key>CFBundleIdentifier</key>
+            <string>com.postvoid.ios.port</string>
+
+            <key>CFBundleName</key>
+            <string>POST VOID</string>
+
+            <key>CFBundleDisplayName</key>
+            <string>POST VOID</string>
+
+            <key>CFBundlePackageType</key>
+            <string>APPL</string>
+
+            <key>CFBundleShortVersionString</key>
+            <string>0.1</string>
+
+            <key>CFBundleVersion</key>
+            <string>1</string>
+
+            <key>MinimumOSVersion</key>
+            <string>15.0</string>
+
+            <key>UILaunchStoryboardName</key>
+            <string></string>
+
+            <key>UIRequiresFullScreen</key>
+            <true/>
+
+            <key>UISupportedInterfaceOrientations</key>
+            <array>
+              <string>UIInterfaceOrientationLandscapeLeft</string>
+              <string>UIInterfaceOrientationLandscapeRight</string>
+            </array>
+
+            <key>UIRequiredDeviceCapabilities</key>
+            <array>
+              <string>arm64</string>
+            </array>
+
+          </dict>
+          </plist>
+          EOF
+
+      - name: Ad-hoc sign
+        shell: bash
+        run: |
+          codesign \
+            --force \
+            --sign - \
+            --timestamp=none \
+            Payload/PostVoid.app
+
+      - name: Build IPA
+        shell: bash
+        run: |
+          set -e
+
+          zip -qry POST-VOID-iOS-v0.1-RunnerBootstrap.ipa Payload
+
+          echo ""
+          echo "=== RESULT ==="
+          ls -lh POST-VOID-iOS-v0.1-RunnerBootstrap.ipa
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: POST-VOID-iOS-v0.1
+          path: POST-VOID-iOS-v0.1-RunnerBootstrap.ipa
+          if-no-files-found: error
