@@ -378,13 +378,44 @@ jobs:
           #include <SDL2/SDL.h>
           #include <SDL2/SDL_main.h>
           #include <loop.h>
+          #include "log.h"
 
+          #include <stdarg.h>
           #include <limits.h>
           #include <stdio.h>
           #include <stdlib.h>
           #include <string.h>
           #include <sys/stat.h>
           #include <unistd.h>
+
+          void platformLog(
+              const logType type,
+              const char *format,
+              va_list va
+          ) {
+              FILE *out = stderr;
+
+              switch (type) {
+                  case LOG_TYPE_NORMAL:
+                      out = stdout;
+                      break;
+
+                  case LOG_TYPE_WARNING:
+                      fputs("Warning: ", out);
+                      break;
+
+                  case LOG_TYPE_ERROR:
+                      fputs("Error: ", out);
+                      break;
+
+                  case LOG_TYPE_DEBUG:
+                      fputs("Debug: ", out);
+                      break;
+              }
+
+              vfprintf(out, format, va);
+              fflush(out);
+          }
 
           static void ensureDir(const char *path) {
               if (path && path[0])
@@ -1193,7 +1224,7 @@ jobs:
 
           cp -R "$APP" work/Payload/PostVoid.app
 
-          rm -f out/POST-VOID-iOS-v5-FIXED-ICON-BUTTONS-unsigned.ipa
+          rm -f out/POST-VOID-iOS-v6-LINKFIX-ICON-BUTTONS-unsigned.ipa
 
           ditto \
             -c \
@@ -1201,18 +1232,18 @@ jobs:
             --sequesterRsrc \
             --keepParent \
             work/Payload \
-            out/POST-VOID-iOS-v5-FIXED-ICON-BUTTONS-unsigned.ipa
+            out/POST-VOID-iOS-v6-LINKFIX-ICON-BUTTONS-unsigned.ipa
 
-          test -s out/POST-VOID-iOS-v5-FIXED-ICON-BUTTONS-unsigned.ipa
+          test -s out/POST-VOID-iOS-v6-LINKFIX-ICON-BUTTONS-unsigned.ipa
 
           echo "IPA ready:"
-          ls -lh out/POST-VOID-iOS-v5-FIXED-ICON-BUTTONS-unsigned.ipa
+          ls -lh out/POST-VOID-iOS-v6-LINKFIX-ICON-BUTTONS-unsigned.ipa
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: POST-VOID-iOS-v5-FIXED-ICON-BUTTONS
-          path: out/POST-VOID-iOS-v5-FIXED-ICON-BUTTONS-unsigned.ipa
+          name: POST-VOID-iOS-v6-LINKFIX-ICON-BUTTONS
+          path: out/POST-VOID-iOS-v6-LINKFIX-ICON-BUTTONS-unsigned.ipa
           if-no-files-found: error
           compression-level: 0
 
