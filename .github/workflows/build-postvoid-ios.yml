@@ -1,140 +1,404 @@
-name: Build POST VOID iOS
+name: POST VOID iOS Port
 
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   build:
-    runs-on: macos-latest
+    name: Build POST VOID iOS
+    runs-on: macos-15
+    timeout-minutes: 90
 
     steps:
+      # ============================================================
+      # 1. REPOSITORY
+      # ============================================================
+
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Show Xcode
         run: |
+          set -e
           xcodebuild -version
           xcrun --sdk iphoneos --show-sdk-version
+          clang --version
 
-      - name: Find uploaded POST VOID APK
-        id: apk
+      # ============================================================
+      # 2. DOWNLOAD OUR POST VOID APK FROM RELEASE
+      # ============================================================
+
+      - name: Download POST VOID APK from Release
+        env:
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
 
-          APK="$(find . -type f -iname "*.apk" | head -1)"
+          mkdir -p "$GITHUB_WORKSPACE/input"
+          mkdir -p "$GITHUB_WORKSPACE/work"
+          mkdir -p "$GITHUB_WORKSPACE/logs"
+          mkdir -p "$GITHUB_WORKSPACE/out"
 
-          if [ -z "$APK" ]; then
-            echo "ERROR: Upload the POST VOID APK into this repository."
+          echo "Searching GitHub Releases..."
+
+          TAG="$(
+            gh release list \
+              --limit 1 \
+              --json tagName \
+              --jq '.[0].tagName'
+          )"
+
+          if [ -z "$TAG" ]; then
+            echo "ERROR: No GitHub Release found."
             exit 1
           fi
 
-          echo "Found: $APK"
-          echo "apk=$APK" >> "$GITHUB_OUTPUT"
+          echo "Release: $TAG"
+
+          echo "Release assets:"
+          gh release view "$TAG" \
+            --json assets \
+            --jq '.assets[].name'
+
+          gh release download "$TAG" \
+            --pattern "*.apk" \
+            --dir "$GITHUB_WORKSPACE/input" \
+            --clobber
+
+          APK="$(
+            find "$GITHUB_WORKSPACE/input" \
+              -type f \
+              -iname "*.apk" \
+              | head -n 1
+          )"
+
+          if [ -z "$APK" ]; then
+            echo "ERROR: APK not found in Release."
+            exit 1
+          fi
+
+          if [ ! -f "$APK" ]; then
+            echo "ERROR: APK path is invalid."
+            exit 1
+          fi
+
+          echo "APK=$APK" >> "$GITHUB_ENV"
+
+          echo "======================================"
+          echo "POST VOID APK FOUND"
+          echo "======================================"
+
+          ls -lh "$APK"
+
+      # ============================================================
+      # 3. EXTRACT ANDROID PORT
+      # ============================================================
 
       - name: Extract Android port
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
 
           mkdir -p work/apk
-          unzip -q "${{ steps.apk.outputs.apk }}" -d work/apk
 
-          echo "=== APK CONTENT ==="
-          find work/apk -maxdepth 3 -type f | head -200
+          unzip -q "$APK" -d work/apk
+
+          echo "APK extracted."
+
+          echo "Top-level:"
+          ls -la work/apk
+
+          echo "Assets:"
+          find work/apk/assets \
+            -maxdepth 2 \
+            -type f \
+            -print 2>/dev/null \
+            | head -100 || true
+
+          echo "Native libraries:"
+          find work/apk/lib \
+            -type f \
+            -print 2>/dev/null || true
+
+      # ============================================================
+      # 4. EXTRACT EMBEDDED GAME APK / GAME.DROID
+      # ============================================================
 
       - name: Find embedded game data
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
 
+          mkdir -p work/data0
+          mkdir -p work/gameapk
           mkdir -p work/game
 
-          GAME_APK="$(find work/apk -type f -name "game_data.apk" | head -1)"
+          DATA0="$GITHUB_WORKSPACE/work/apk/assets/data0"
 
-          if [ -n "$GAME_APK" ]; then
-            echo "Found game_data.apk: $GAME_APK"
-            unzip -q "$GAME_APK" -d work/game
-          fi
-
-          GAME="$(find work -type f -name "game.droid" | head -1)"
-
-          if [ -z "$GAME" ]; then
-            echo "ERROR: game.droid not found."
-            find work -type f | sort
+          if [ ! -f "$DATA0" ]; then
+            echo "ERROR: assets/data0 not found."
+            echo
+            echo "Available assets:"
+            find work/apk/assets \
+              -maxdepth 3 \
+              -type f \
+              -print || true
             exit 1
           fi
 
-          cp "$GAME" work/game.droid
+          echo "Found data0:"
+          ls -lh "$DATA0"
 
-          echo "=== GAME DATA ==="
-          ls -lh work/game.droid
+          cp "$DATA0" work/data0/data0.zip
 
-      - name: Create iOS runner project
+          echo "Extracting data0..."
+
+          unzip -q \
+            work/data0/data0.zip \
+            -d work/data0/unpacked
+
+          echo "Contents:"
+          find work/data0/unpacked \
+            -maxdepth 4 \
+            -type f \
+            -print
+
+          GAME_APK="$(
+            find work/data0/unpacked \
+              -type f \
+              -name "game_data.apk" \
+              | head -n 1
+          )"
+
+          if [ -z "$GAME_APK" ]; then
+            GAME_APK="$(
+              find work/data0/unpacked \
+                -type f \
+                -name "*.apk" \
+                | head -n 1
+            )"
+          fi
+
+          if [ -z "$GAME_APK" ]; then
+            echo "ERROR: Embedded game APK not found."
+            exit 1
+          fi
+
+          echo "Embedded game APK:"
+          ls -lh "$GAME_APK"
+
+          unzip -q "$GAME_APK" \
+            -d work/gameapk
+
+          echo "Searching for game.droid..."
+
+          GAME_DROID="$(
+            find work/gameapk \
+              -type f \
+              -name "game.droid" \
+              | head -n 1
+          )"
+
+          if [ -z "$GAME_DROID" ]; then
+            echo "ERROR: game.droid not found."
+            find work/gameapk \
+              -maxdepth 4 \
+              -type f \
+              -print \
+              | head -200
+            exit 1
+          fi
+
+          echo "GAME_DROID=$GAME_DROID" \
+            >> "$GITHUB_ENV"
+
+          echo "======================================"
+          echo "POST VOID GAME PACKAGE FOUND"
+          echo "======================================"
+
+          ls -lh "$GAME_DROID"
+
+          file "$GAME_DROID"
+
+          echo "Copying complete game assets..."
+
+          if [ -d work/gameapk/assets ]; then
+            cp -R \
+              work/gameapk/assets/. \
+              work/game/
+          fi
+
+          cp "$GAME_DROID" \
+            work/game/game.droid
+
+          echo
+          echo "Final game data:"
+          du -sh work/game
+          find work/game \
+            -maxdepth 2 \
+            -type f \
+            -print \
+            | head -100
+
+      # ============================================================
+      # 5. GET BUTTERSCOTCH GAMEMAKER RUNNER
+      # ============================================================
+
+      - name: Clone GameMaker runner
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
 
-          mkdir -p ios
+          git clone \
+            --depth 1 \
+            https://github.com/ButterscotchRunner/Butterscotch.git \
+            work/Butterscotch
 
-          cat > ios/main.m <<'EOF'
+          cd work/Butterscotch
+
+          git submodule update \
+            --init \
+            --recursive
+
+          echo "Butterscotch downloaded."
+
+          git log -1 --oneline
+
+      # ============================================================
+      # 6. CREATE iOS BOOTSTRAP
+      # ============================================================
+
+      - name: Create iOS bootstrap
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p work/ios
+
+          cat > work/ios/main.m <<'EOF'
           #import <UIKit/UIKit.h>
+          #import <Foundation/Foundation.h>
+          #import <QuartzCore/QuartzCore.h>
+          #import <OpenGLES/ES3/gl.h>
+          #import <OpenGLES/ES3/glext.h>
 
-          @interface PVViewController : UIViewController
+          @interface PostVoidView : UIView
           @end
 
-          @implementation PVViewController
+          @implementation PostVoidView
 
-          - (void)viewDidLoad {
-              [super viewDidLoad];
-
-              self.view.backgroundColor = UIColor.blackColor;
-
-              UILabel *label = [[UILabel alloc] initWithFrame:self.view.bounds];
-              label.autoresizingMask =
-                  UIViewAutoresizingFlexibleWidth |
-                  UIViewAutoresizingFlexibleHeight;
-
-              label.textAlignment = NSTextAlignmentCenter;
-              label.numberOfLines = 0;
-              label.textColor = UIColor.whiteColor;
-              label.font = [UIFont boldSystemFontOfSize:24];
-
-              NSString *game =
-                  [[NSBundle mainBundle] pathForResource:@"game"
-                                                 ofType:@"droid"];
-
-              if (game) {
-                  label.text =
-                    @"POST VOID iOS\n\nGame data loaded ✓\nRunner bootstrap ready";
-              } else {
-                  label.text =
-                    @"POST VOID iOS\n\ngame.droid missing";
-              }
-
-              [self.view addSubview:label];
+          + (Class)layerClass
+          {
+              return [CAEAGLLayer class];
           }
 
-          - (BOOL)prefersStatusBarHidden {
+          - (instancetype)initWithFrame:(CGRect)frame
+          {
+              self = [super initWithFrame:frame];
+
+              if (self)
+              {
+                  self.multipleTouchEnabled = YES;
+                  self.backgroundColor =
+                      [UIColor blackColor];
+              }
+
+              return self;
+          }
+
+          @end
+
+
+          @interface PostVoidViewController :
+              UIViewController
+          @end
+
+
+          @implementation PostVoidViewController
+
+          - (void)loadView
+          {
+              CGRect frame =
+                  [UIScreen mainScreen].bounds;
+
+              self.view =
+                  [[PostVoidView alloc]
+                      initWithFrame:frame];
+          }
+
+          - (BOOL)prefersStatusBarHidden
+          {
               return YES;
           }
 
+          - (UIInterfaceOrientationMask)
+              supportedInterfaceOrientations
+          {
+              return
+                  UIInterfaceOrientationMaskLandscape;
+          }
+
           @end
 
-          @interface PVAppDelegate : UIResponder <UIApplicationDelegate>
-          @property(nonatomic,strong) UIWindow *window;
+
+          @interface AppDelegate :
+              UIResponder
+              <UIApplicationDelegate>
+          @property(
+              strong,
+              nonatomic
+          ) UIWindow *window;
           @end
 
-          @implementation PVAppDelegate
 
-          - (BOOL)application:(UIApplication *)application
-                  didFinishLaunchingWithOptions:(NSDictionary *)options {
+          @implementation AppDelegate
+
+          - (BOOL)application:
+              (UIApplication *)application
+              didFinishLaunchingWithOptions:
+              (NSDictionary *)launchOptions
+          {
+              NSLog(
+                  @"POST VOID iOS bootstrap starting"
+              );
+
+              NSString *bundle =
+                  [[NSBundle mainBundle]
+                      bundlePath];
+
+              NSString *game =
+                  [bundle
+                      stringByAppendingPathComponent:
+                      @"game.droid"];
+
+              BOOL exists =
+                  [[NSFileManager defaultManager]
+                      fileExistsAtPath:game];
+
+              NSLog(
+                  @"game.droid path: %@",
+                  game
+              );
+
+              NSLog(
+                  @"game.droid exists: %@",
+                  exists ? @"YES" : @"NO"
+              );
 
               self.window =
-                [[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
+                  [[UIWindow alloc]
+                      initWithFrame:
+                      [UIScreen mainScreen].bounds];
+
+              PostVoidViewController *vc =
+                  [PostVoidViewController new];
 
               self.window.rootViewController =
-                [[PVViewController alloc] init];
+                  vc;
 
               [self.window makeKeyAndVisible];
 
@@ -143,119 +407,329 @@ jobs:
 
           @end
 
-          int main(int argc, char *argv[]) {
-              @autoreleasepool {
+
+          int main(
+              int argc,
+              char *argv[]
+          )
+          {
+              @autoreleasepool
+              {
                   return UIApplicationMain(
                       argc,
                       argv,
                       nil,
-                      NSStringFromClass(PVAppDelegate.class)
+                      NSStringFromClass(
+                          [AppDelegate class]
+                      )
                   );
               }
           }
           EOF
 
-      - name: Compile ARM64 iOS bootstrap
+      # ============================================================
+      # 7. INFO.PLIST
+      # ============================================================
+
+      - name: Create Info.plist
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
 
-          SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
-
-          mkdir -p Payload/PostVoid.app
-
-          xcrun --sdk iphoneos clang \
-            -arch arm64 \
-            -miphoneos-version-min=15.0 \
-            -fobjc-arc \
-            -isysroot "$SDK" \
-            -framework UIKit \
-            -framework Foundation \
-            ios/main.m \
-            -o Payload/PostVoid.app/PostVoid
-
-      - name: Add complete POST VOID game data
-        shell: bash
-        run: |
-          set -e
-
-          cp work/game.droid Payload/PostVoid.app/game.droid
-
-          cat > Payload/PostVoid.app/Info.plist <<'EOF'
+          cat > work/ios/Info.plist <<'EOF'
           <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+          <!DOCTYPE plist PUBLIC
+          "-//Apple//DTD PLIST 1.0//EN"
           "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+
           <plist version="1.0">
           <dict>
 
-            <key>CFBundleExecutable</key>
-            <string>PostVoid</string>
+              <key>CFBundleDevelopmentRegion</key>
+              <string>en</string>
 
-            <key>CFBundleIdentifier</key>
-            <string>com.postvoid.ios.port</string>
+              <key>CFBundleDisplayName</key>
+              <string>POST VOID</string>
 
-            <key>CFBundleName</key>
-            <string>POST VOID</string>
+              <key>CFBundleExecutable</key>
+              <string>PostVoid</string>
 
-            <key>CFBundleDisplayName</key>
-            <string>POST VOID</string>
+              <key>CFBundleIdentifier</key>
+              <string>com.ourports.postvoid</string>
 
-            <key>CFBundlePackageType</key>
-            <string>APPL</string>
+              <key>CFBundleInfoDictionaryVersion</key>
+              <string>6.0</string>
 
-            <key>CFBundleShortVersionString</key>
-            <string>0.1</string>
+              <key>CFBundleName</key>
+              <string>POST VOID</string>
 
-            <key>CFBundleVersion</key>
-            <string>1</string>
+              <key>CFBundlePackageType</key>
+              <string>APPL</string>
 
-            <key>MinimumOSVersion</key>
-            <string>15.0</string>
+              <key>CFBundleShortVersionString</key>
+              <string>1.0</string>
 
-            <key>UILaunchStoryboardName</key>
-            <string></string>
+              <key>CFBundleVersion</key>
+              <string>1</string>
 
-            <key>UIRequiresFullScreen</key>
-            <true/>
+              <key>LSRequiresIPhoneOS</key>
+              <true/>
 
-            <key>UISupportedInterfaceOrientations</key>
-            <array>
-              <string>UIInterfaceOrientationLandscapeLeft</string>
-              <string>UIInterfaceOrientationLandscapeRight</string>
-            </array>
+              <key>MinimumOSVersion</key>
+              <string>15.0</string>
 
-            <key>UIRequiredDeviceCapabilities</key>
-            <array>
-              <string>arm64</string>
-            </array>
+              <key>UIRequiresFullScreen</key>
+              <true/>
+
+              <key>UIStatusBarHidden</key>
+              <true/>
+
+              <key>UIViewControllerBasedStatusBarAppearance</key>
+              <false/>
+
+              <key>UISupportedInterfaceOrientations</key>
+              <array>
+
+                  <string>
+                  UIInterfaceOrientationLandscapeLeft
+                  </string>
+
+                  <string>
+                  UIInterfaceOrientationLandscapeRight
+                  </string>
+
+              </array>
+
+              <key>UIFileSharingEnabled</key>
+              <true/>
+
+              <key>LSSupportsOpeningDocumentsInPlace</key>
+              <true/>
+
+              <key>UIApplicationSupportsIndirectInputEvents</key>
+              <true/>
+
+              <key>UILaunchScreen</key>
+              <dict/>
 
           </dict>
           </plist>
           EOF
 
+      # ============================================================
+      # 8. COMPILE REAL ARM64 iOS EXECUTABLE
+      # ============================================================
+
+      - name: Compile ARM64 iOS bootstrap
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SDK="$(
+            xcrun \
+              --sdk iphoneos \
+              --show-sdk-path
+          )"
+
+          echo "SDK: $SDK"
+
+          mkdir -p \
+            work/Payload/PostVoid.app
+
+          xcrun \
+            --sdk iphoneos \
+            clang \
+            -arch arm64 \
+            -miphoneos-version-min=15.0 \
+            -fobjc-arc \
+            -isysroot "$SDK" \
+            work/ios/main.m \
+            -framework UIKit \
+            -framework Foundation \
+            -framework QuartzCore \
+            -framework OpenGLES \
+            -framework CoreGraphics \
+            -o \
+            work/Payload/PostVoid.app/PostVoid
+
+          echo "Executable:"
+          file \
+            work/Payload/PostVoid.app/PostVoid
+
+          lipo \
+            -info \
+            work/Payload/PostVoid.app/PostVoid
+
+      # ============================================================
+      # 9. ADD COMPLETE POST VOID GAME
+      # ============================================================
+
+      - name: Add complete POST VOID game data
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          APP="$GITHUB_WORKSPACE/work/Payload/PostVoid.app"
+
+          cp work/ios/Info.plist \
+            "$APP/Info.plist"
+
+          echo "Copying complete game package..."
+
+          cp -R \
+            work/game/. \
+            "$APP/"
+
+          if [ ! -f "$APP/game.droid" ]; then
+            echo "ERROR: game.droid missing from app."
+            exit 1
+          fi
+
+          echo "Game package:"
+          ls -lh "$APP/game.droid"
+
+          echo "Complete app size:"
+          du -sh "$APP"
+
+          echo "App files:"
+          find "$APP" \
+            -maxdepth 2 \
+            -type f \
+            -print \
+            | head -200
+
+      # ============================================================
+      # 10. CREATE DOCUMENTS README
+      # ============================================================
+
+      - name: Add diagnostics information
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          APP="$GITHUB_WORKSPACE/work/Payload/PostVoid.app"
+
+          cat > "$APP/PORT-INFO.txt" <<'EOF'
+          POST VOID iOS Port
+
+          Architecture:
+          arm64
+
+          Minimum iOS:
+          15.0
+
+          Game data:
+          game.droid
+
+          This build contains the extracted
+          POST VOID GameMaker game package.
+
+          Stage 1 runner bootstrap build.
+          EOF
+
+      # ============================================================
+      # 11. AD-HOC SIGN
+      # ============================================================
+
       - name: Ad-hoc sign
         shell: bash
         run: |
+          set -euo pipefail
+
+          APP="$GITHUB_WORKSPACE/work/Payload/PostVoid.app"
+
           codesign \
             --force \
             --sign - \
             --timestamp=none \
-            Payload/PostVoid.app
+            "$APP"
+
+          codesign \
+            -dvvv \
+            "$APP" \
+            2>&1 || true
+
+      # ============================================================
+      # 12. BUILD IPA
+      # ============================================================
 
       - name: Build IPA
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
 
-          zip -qry POST-VOID-iOS-v0.1-RunnerBootstrap.ipa Payload
+          mkdir -p out
 
-          echo ""
-          echo "=== RESULT ==="
-          ls -lh POST-VOID-iOS-v0.1-RunnerBootstrap.ipa
+          cd work
 
-      - name: Upload IPA
+          zip \
+            -qry \
+            ../out/POST-VOID-iOS-v1.ipa \
+            Payload
+
+          cd ..
+
+          echo "======================================"
+          echo "IPA CREATED"
+          echo "======================================"
+
+          ls -lh \
+            out/POST-VOID-iOS-v1.ipa
+
+          unzip -l \
+            out/POST-VOID-iOS-v1.ipa \
+            | head -100
+
+      # ============================================================
+      # 13. UPLOAD IPA
+      # ============================================================
+
+      - name: Upload POST VOID IPA
         uses: actions/upload-artifact@v4
         with:
-          name: POST-VOID-iOS-v0.1
-          path: POST-VOID-iOS-v0.1-RunnerBootstrap.ipa
+          name: POST-VOID-iOS-v1
+          path: out/POST-VOID-iOS-v1.ipa
           if-no-files-found: error
+          compression-level: 0
+
+      # ============================================================
+      # 14. DEBUG PACKAGE
+      # ============================================================
+
+      - name: Create diagnostics
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p diagnostics
+
+          echo "POST VOID iOS build diagnostics" \
+            > diagnostics/info.txt
+
+          echo "" \
+            >> diagnostics/info.txt
+
+          echo "Runner: iOS ARM64 bootstrap" \
+            >> diagnostics/info.txt
+
+          echo "Game format: GameMaker game.droid" \
+            >> diagnostics/info.txt
+
+          if [ -n "${APK:-}" ]; then
+            echo "APK=$APK" \
+              >> diagnostics/info.txt
+          fi
+
+          find work \
+            -maxdepth 3 \
+            -type f \
+            -print \
+            > diagnostics/files.txt \
+            2>/dev/null || true
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: POST-VOID-iOS-diagnostics
+          path: diagnostics/
+          if-no-files-found: ignore
