@@ -510,10 +510,18 @@ jobs:
               args.windowHeight = 720;
               args.widescreenAspect = 16.0f / 9.0f;
               args.profilerFramesBetween = 0;
-              args.loadType = DATAWINLOADTYPE_LOAD_PER_CHUNK;
-              args.lazyRooms = true;
-              args.lazyTextures = true;
-              args.lazyAudio = true;
+              /*
+               * POST VOID stores absolute pointers that can jump outside
+               * the currently loaded chunk. Per-chunk loading aborts on
+               * those seeks, so keep the whole 225 MB game.droid mapped
+               * in memory while parsing.
+               */
+              args.loadType =
+                  DATAWINLOADTYPE_LOAD_IN_MEMORY_AHEAD_OF_TIME;
+
+              args.lazyRooms = false;
+              args.lazyTextures = false;
+              args.lazyAudio = false;
               args.renderer = MODERN_GL;
               args.disableLogColours = true;
               args.alwaysLogUnknownFunctions = true;
@@ -1224,7 +1232,7 @@ jobs:
 
           cp -R "$APP" work/Payload/PostVoid.app
 
-          rm -f out/POST-VOID-iOS-v6-LINKFIX-ICON-BUTTONS-unsigned.ipa
+          rm -f out/POST-VOID-iOS-v7-RUNTIMEFIX-ICON-BUTTONS-unsigned.ipa
 
           ditto \
             -c \
@@ -1232,18 +1240,18 @@ jobs:
             --sequesterRsrc \
             --keepParent \
             work/Payload \
-            out/POST-VOID-iOS-v6-LINKFIX-ICON-BUTTONS-unsigned.ipa
+            out/POST-VOID-iOS-v7-RUNTIMEFIX-ICON-BUTTONS-unsigned.ipa
 
-          test -s out/POST-VOID-iOS-v6-LINKFIX-ICON-BUTTONS-unsigned.ipa
+          test -s out/POST-VOID-iOS-v7-RUNTIMEFIX-ICON-BUTTONS-unsigned.ipa
 
           echo "IPA ready:"
-          ls -lh out/POST-VOID-iOS-v6-LINKFIX-ICON-BUTTONS-unsigned.ipa
+          ls -lh out/POST-VOID-iOS-v7-RUNTIMEFIX-ICON-BUTTONS-unsigned.ipa
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: POST-VOID-iOS-v6-LINKFIX-ICON-BUTTONS
-          path: out/POST-VOID-iOS-v6-LINKFIX-ICON-BUTTONS-unsigned.ipa
+          name: POST-VOID-iOS-v7-RUNTIMEFIX-ICON-BUTTONS
+          path: out/POST-VOID-iOS-v7-RUNTIMEFIX-ICON-BUTTONS-unsigned.ipa
           if-no-files-found: error
           compression-level: 0
 
