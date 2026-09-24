@@ -364,6 +364,126 @@ jobs:
               gl_shader_replacement,
           )
 
+          # The previous extension-based fix is not enough on Apple's GLSL
+          # compiler for this exact GameMaker SDF shader. Replace ONLY the
+          # internal __yy_sdf_shader fragment source with a simple compatible
+          # shader. POST VOID's own gameplay shaders are left untouched.
+          sdf_compile_anchor = '''        compileProgram(
+              gmlShader,
+              shdr->name,
+              vertexShaderSource,
+              fragmentShaderSource,
+              shdr->vertexAttributeCount,
+              shdr->vertexAttributes
+          );'''
+
+          sdf_compile_replacement = r'''#ifdef PLATFORM_IOS
+                  if (
+                      modernGl->isGLES &&
+                      strcmp(shdr->name, "__yy_sdf_shader") == 0
+                  ) {
+                      fragmentShaderSource =
+                          "#version 100\n"
+                          "precision mediump float;\n"
+                          "varying vec2 v_vTexcoord;\n"
+                          "varying vec4 v_vColour;\n"
+                          "uniform sampler2D gm_BaseTexture;\n"
+                          "void main() {\n"
+                          "    vec4 texcol = texture2D(gm_BaseTexture, v_vTexcoord);\n"
+                          "    float spread = 0.0035;\n"
+                          "    float alpha = smoothstep(0.5 - spread, 0.5 + spread, texcol.a);\n"
+                          "    gl_FragColor = vec4(v_vColour.rgb, alpha * v_vColour.a);\n"
+                          "}\n";
+                  }
+          #endif
+
+                  compileProgram(
+                      gmlShader,
+                      shdr->name,
+                      vertexShaderSource,
+                      fragmentShaderSource,
+                      shdr->vertexAttributeCount,
+                      shdr->vertexAttributes
+                  );'''
+
+          replace(
+              'src/gl/gl_renderer.c',
+              sdf_compile_anchor,
+              sdf_compile_replacement,
+          )
+
+          # POST VOID's Android port documents the startup order as:
+          # room_preload (0) -> room_splash_screen (1) ->
+          # room_epilepsy (2) -> room_menu (4).
+          #
+          # On the iOS Butterscotch runner the game reaches room_preload but
+          # never leaves it. Keep normal GML room changes, but add a timed
+          # fallback only when those boot rooms are still stuck.
+          boot_tail_anchor = '''    runner->frameCount++;
+          }
+
+          // ===[ Surface Stack ]==='''
+
+          boot_tail_replacement = r'''#ifdef PLATFORM_IOS
+              static int32_t iosBootLastRoom = -9999;
+              static int32_t iosBootRoomFrames = 0;
+
+              if (runner->currentRoomIndex != iosBootLastRoom) {
+                  iosBootLastRoom = runner->currentRoomIndex;
+                  iosBootRoomFrames = 0;
+                  logInfo(
+                      "iOS boot: entered room %d (%s)\n",
+                      runner->currentRoomIndex,
+                      runner->currentRoom != nullptr
+                          ? runner->currentRoom->name
+                          : "<null>"
+                  );
+              }
+
+              iosBootRoomFrames++;
+
+              if (runner->pendingRoom < 0) {
+                  if (
+                      runner->currentRoomIndex == 0 &&
+                      iosBootRoomFrames > 10
+                  ) {
+                      logWarn(
+                          "iOS boot fallback: room_preload stuck, advancing to room 1\n"
+                      );
+                      runner->pendingRoom = 1;
+                  }
+                  else if (
+                      runner->currentRoomIndex == 1 &&
+                      iosBootRoomFrames > 240
+                  ) {
+                      logWarn(
+                          "iOS boot fallback: splash stuck, advancing to room 2\n"
+                      );
+                      runner->pendingRoom = 2;
+                  }
+                  else if (
+                      runner->currentRoomIndex == 2 &&
+                      iosBootRoomFrames > 240
+                  ) {
+                      logWarn(
+                          "iOS boot fallback: epilepsy screen stuck, advancing to menu room 4\n"
+                      );
+                      runner->pendingRoom = 4;
+                  }
+              }
+          #endif
+
+              runner->frameCount++;
+          }
+
+          // ===[ Surface Stack ]==='''
+
+          replace(
+              'src/runner.c',
+              boot_tail_anchor,
+              boot_tail_replacement,
+          )
+
           # ----------------------------------------------------------
           # 2. Build SDL2 inside the same Xcode project on iOS.
           # ----------------------------------------------------------
@@ -1325,7 +1445,7 @@ jobs:
 
           cp -R "$APP" work/Payload/PostVoid.app
 
-          rm -f out/POST-VOID-iOS-v8-PRELOADFIX-ICON-BUTTONS-unsigned.ipa
+          rm -f out/POST-VOID-iOS-v9-BOOTFIX-ICON-BUTTONS-unsigned.ipa
 
           ditto \
             -c \
@@ -1333,18 +1453,18 @@ jobs:
             --sequesterRsrc \
             --keepParent \
             work/Payload \
-            out/POST-VOID-iOS-v8-PRELOADFIX-ICON-BUTTONS-unsigned.ipa
+            out/POST-VOID-iOS-v9-BOOTFIX-ICON-BUTTONS-unsigned.ipa
 
-          test -s out/POST-VOID-iOS-v8-PRELOADFIX-ICON-BUTTONS-unsigned.ipa
+          test -s out/POST-VOID-iOS-v9-BOOTFIX-ICON-BUTTONS-unsigned.ipa
 
           echo "IPA ready:"
-          ls -lh out/POST-VOID-iOS-v8-PRELOADFIX-ICON-BUTTONS-unsigned.ipa
+          ls -lh out/POST-VOID-iOS-v9-BOOTFIX-ICON-BUTTONS-unsigned.ipa
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: POST-VOID-iOS-v8-PRELOADFIX-ICON-BUTTONS
-          path: out/POST-VOID-iOS-v8-PRELOADFIX-ICON-BUTTONS-unsigned.ipa
+          name: POST-VOID-iOS-v9-BOOTFIX-ICON-BUTTONS
+          path: out/POST-VOID-iOS-v9-BOOTFIX-ICON-BUTTONS-unsigned.ipa
           if-no-files-found: error
           compression-level: 0
 
