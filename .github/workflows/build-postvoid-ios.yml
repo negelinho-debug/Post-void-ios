@@ -153,6 +153,32 @@ jobs:
           ls -lh work/game/game.droid
           find work/game -maxdepth 2 -type f -print
 
+      - name: Extract original POST VOID icon and buttons
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p work/ui
+
+          unzip -p "$APK" 'res/o-.png' > work/ui/IconSource.png
+          unzip -p "$APK" 'res/2_.png' > work/ui/PV_pause.png
+          unzip -p "$APK" 'res/t3.png' > work/ui/PV_fire.png
+          unzip -p "$APK" 'res/UF.png' > work/ui/PV_jump.png
+          unzip -p "$APK" 'res/5J.png' > work/ui/PV_extra.png
+
+          test -s work/ui/IconSource.png
+          test -s work/ui/PV_pause.png
+          test -s work/ui/PV_fire.png
+          test -s work/ui/PV_jump.png
+          test -s work/ui/PV_extra.png
+
+          sips -z 180 180 work/ui/IconSource.png             --out work/ui/Icon-60@3x.png >/dev/null
+
+          sips -z 120 120 work/ui/IconSource.png             --out work/ui/Icon-60@2x.png >/dev/null
+
+          echo "Original icon/buttons extracted:"
+          ls -lh work/ui
+
       - name: Get Butterscotch GameMaker runner
         shell: bash
         run: |
@@ -189,6 +215,16 @@ jobs:
 
           root = Path('work/Butterscotch')
 
+          replace(
+              'CMakeLists.txt',
+              'project(butterscotch C)',
+              '''if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+          project(butterscotch C OBJC)
+          else()
+          project(butterscotch C)
+          endif()''',
+          )
+
           def replace(path, old, new, count=1):
               p = root / path
               s = p.read_text()
@@ -221,6 +257,18 @@ jobs:
               'src/loop.c',
               '!defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !defined(PLATFORM_PS3) && !defined(PLATFORM_VITA) && !defined(__SWITCH__)',
               '!defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !defined(PLATFORM_IOS) && !defined(PLATFORM_PS3) && !defined(PLATFORM_VITA) && !defined(__SWITCH__)',
+          )
+
+          replace(
+              'src/gl_common/gl_wrappers.h',
+              '#if !defined(_BS_GL_WRAPPERS_H_) && !defined(__EMSCRIPTEN__) && !defined(PLATFORM_PS3) && !defined(PLATFORM_VITA) && !defined(__ANDROID__) && !defined(__SWITCH__)',
+              '#if !defined(_BS_GL_WRAPPERS_H_) && !defined(__EMSCRIPTEN__) && !defined(PLATFORM_PS3) && !defined(PLATFORM_VITA) && !defined(__ANDROID__) && !defined(__SWITCH__) && !defined(PLATFORM_IOS)',
+          )
+
+          replace(
+              'src/gl_common/gl_common.c',
+              '#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !defined(PLATFORM_VITA) && !defined(__SWITCH__) && !defined(PLATFORM_PS3)',
+              '#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !defined(PLATFORM_VITA) && !defined(__SWITCH__) && !defined(PLATFORM_PS3) && !defined(PLATFORM_IOS)',
           )
 
           # ----------------------------------------------------------
@@ -281,6 +329,11 @@ jobs:
                   butterscotch PRIVATE
                   PLATFORM_IOS
               )
+              target_sources(
+                  butterscotch PRIVATE
+                  src/ios/ios_overlay.m
+              )
+
 
               set_target_properties(
                   butterscotch PROPERTIES
@@ -288,7 +341,7 @@ jobs:
                   OUTPUT_NAME "PostVoid"
                   MACOSX_BUNDLE_INFO_PLIST "${CMAKE_SOURCE_DIR}/ios/Info.plist"
                   XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "com.ourports.postvoid"
-                  XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "1,2"
+                  XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "1"
                   XCODE_ATTRIBUTE_IPHONEOS_DEPLOYMENT_TARGET "15.0"
                   XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED "NO"
                   XCODE_ATTRIBUTE_CODE_SIGNING_REQUIRED "NO"
@@ -463,6 +516,45 @@ jobs:
           # ----------------------------------------------------------
           p = root / 'src/backends/sdl2.c'
           s = p.read_text()
+
+          init_fn_anchor = 'bool platformInit(int reqW, int reqH, const char *title, bool headless) {'
+          if init_fn_anchor not in s:
+              raise SystemExit('iOS overlay platformInit anchor missing')
+
+          s = s.replace(
+              init_fn_anchor,
+              '''#ifdef PLATFORM_IOS
+          extern void IOSOverlayInstall(void);
+          #endif
+
+          bool platformInit(int reqW, int reqH, const char *title, bool headless) {''',
+              1,
+          )
+
+          platform_return_anchor = '''#endif
+
+              return true;
+          }
+
+          void platformExit(void) {'''
+
+          if platform_return_anchor not in s:
+              raise SystemExit('iOS overlay return anchor missing')
+
+          s = s.replace(
+              platform_return_anchor,
+              '''#endif
+
+          #ifdef PLATFORM_IOS
+              IOSOverlayInstall();
+          #endif
+
+              return true;
+          }
+
+          void platformExit(void) {''',
+              1,
+          )
 
           anchor = 'static SDL_GameController* openControllers[MAX_GAMEPADS];\n'
           if anchor not in s:
@@ -753,6 +845,132 @@ jobs:
 
           p.write_text(s)
 
+
+          # ----------------------------------------------------------
+          # 6. Visible iPhone controls overlay.
+          # ----------------------------------------------------------
+          ios_src = root / 'src/ios'
+          ios_src.mkdir(parents=True, exist_ok=True)
+
+          overlay_m = r"""
+          #import <UIKit/UIKit.h>
+          #import <QuartzCore/QuartzCore.h>
+
+          static UIImageView *PVImage(NSString *name, CGFloat size, CGFloat alpha) {
+              UIImage *image = [UIImage imageNamed:name];
+              UIImageView *view = [[UIImageView alloc] initWithImage:image];
+              view.translatesAutoresizingMaskIntoConstraints = NO;
+              view.contentMode = UIViewContentModeScaleAspectFit;
+              view.alpha = alpha;
+              view.userInteractionEnabled = NO;
+              [NSLayoutConstraint activateConstraints:@[
+                  [view.widthAnchor constraintEqualToConstant:size],
+                  [view.heightAnchor constraintEqualToConstant:size]
+              ]];
+              return view;
+          }
+
+          static UIView *PVStickRing(CGFloat size) {
+              UIView *ring = [[UIView alloc] initWithFrame:CGRectZero];
+              ring.translatesAutoresizingMaskIntoConstraints = NO;
+              ring.userInteractionEnabled = NO;
+              ring.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.10];
+              ring.layer.borderWidth = 3.0;
+              ring.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.58].CGColor;
+              ring.layer.cornerRadius = size / 2.0;
+
+              [NSLayoutConstraint activateConstraints:@[
+                  [ring.widthAnchor constraintEqualToConstant:size],
+                  [ring.heightAnchor constraintEqualToConstant:size]
+              ]];
+
+              UIView *dot = [[UIView alloc] initWithFrame:CGRectZero];
+              dot.translatesAutoresizingMaskIntoConstraints = NO;
+              dot.userInteractionEnabled = NO;
+              dot.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.42];
+              CGFloat dotSize = size * 0.30;
+              dot.layer.cornerRadius = dotSize / 2.0;
+              [ring addSubview:dot];
+
+              [NSLayoutConstraint activateConstraints:@[
+                  [dot.widthAnchor constraintEqualToConstant:dotSize],
+                  [dot.heightAnchor constraintEqualToConstant:dotSize],
+                  [dot.centerXAnchor constraintEqualToAnchor:ring.centerXAnchor],
+                  [dot.centerYAnchor constraintEqualToAnchor:ring.centerYAnchor]
+              ]];
+
+              return ring;
+          }
+
+          void IOSOverlayInstall(void) {
+              dispatch_async(dispatch_get_main_queue(), ^{
+                  UIApplication *app = [UIApplication sharedApplication];
+                  UIWindow *window = app.keyWindow;
+
+                  if (!window) {
+                      for (UIWindow *candidate in app.windows) {
+                          if (!candidate.hidden) {
+                              window = candidate;
+                              break;
+                          }
+                      }
+                  }
+
+                  if (!window) return;
+
+                  UIView *old = [window viewWithTag:0x50564F49];
+                  if (old) [old removeFromSuperview];
+
+                  UIView *overlay = [[UIView alloc] initWithFrame:window.bounds];
+                  overlay.tag = 0x50564F49;
+                  overlay.backgroundColor = UIColor.clearColor;
+                  overlay.userInteractionEnabled = NO;
+                  overlay.autoresizingMask =
+                      UIViewAutoresizingFlexibleWidth |
+                      UIViewAutoresizingFlexibleHeight;
+
+                  [window addSubview:overlay];
+
+                  UILayoutGuide *safe = window.safeAreaLayoutGuide;
+
+                  UIImageView *pause = PVImage(@"PV_pause", 58.0, 0.68);
+                  UIImageView *fire  = PVImage(@"PV_fire", 82.0, 0.72);
+                  UIImageView *jump  = PVImage(@"PV_jump", 70.0, 0.66);
+                  UIImageView *extra = PVImage(@"PV_extra", 64.0, 0.62);
+                  UIView *leftStick  = PVStickRing(118.0);
+
+                  [overlay addSubview:pause];
+                  [overlay addSubview:fire];
+                  [overlay addSubview:jump];
+                  [overlay addSubview:extra];
+                  [overlay addSubview:leftStick];
+
+                  [NSLayoutConstraint activateConstraints:@[
+                      [pause.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor constant:-14.0],
+                      [pause.topAnchor constraintEqualToAnchor:safe.topAnchor constant:12.0],
+
+                      [fire.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor constant:-18.0],
+                      [fire.bottomAnchor constraintEqualToAnchor:safe.bottomAnchor constant:-18.0],
+
+                      [jump.trailingAnchor constraintEqualToAnchor:fire.leadingAnchor constant:-8.0],
+                      [jump.bottomAnchor constraintEqualToAnchor:safe.bottomAnchor constant:-24.0],
+
+                      [extra.trailingAnchor constraintEqualToAnchor:jump.leadingAnchor constant:-8.0],
+                      [extra.bottomAnchor constraintEqualToAnchor:safe.bottomAnchor constant:-27.0],
+
+                      [leftStick.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor constant:24.0],
+                      [leftStick.bottomAnchor constraintEqualToAnchor:safe.bottomAnchor constant:-20.0]
+                  ]];
+
+                  [window bringSubviewToFront:overlay];
+              });
+          }
+          """
+
+          (ios_src / 'ios_overlay.m').write_text(
+              textwrap.dedent(overlay_m).lstrip()
+          )
+
           # ----------------------------------------------------------
           # 6. iPhone Info.plist.
           # ----------------------------------------------------------
@@ -789,6 +1007,22 @@ jobs:
 
               <key>CFBundleVersion</key>
               <string>1</string>
+
+              <key>CFBundleIconFiles</key>
+              <array>
+                  <string>Icon-60</string>
+              </array>
+
+              <key>CFBundleIcons</key>
+              <dict>
+                  <key>CFBundlePrimaryIcon</key>
+                  <dict>
+                      <key>CFBundleIconFiles</key>
+                      <array>
+                          <string>Icon-60</string>
+                      </array>
+                  </dict>
+              </dict>
 
               <key>LSRequiresIPhoneOS</key>
               <true/>
@@ -912,6 +1146,19 @@ jobs:
 
           cp -R work/game/. "$APP/"
 
+          cp work/ui/Icon-60@2x.png "$APP/Icon-60@2x.png"
+          cp work/ui/Icon-60@3x.png "$APP/Icon-60@3x.png"
+          cp work/ui/PV_pause.png "$APP/PV_pause.png"
+          cp work/ui/PV_fire.png "$APP/PV_fire.png"
+          cp work/ui/PV_jump.png "$APP/PV_jump.png"
+          cp work/ui/PV_extra.png "$APP/PV_extra.png"
+
+          test -f "$APP/Icon-60@3x.png"
+          test -f "$APP/PV_pause.png"
+          test -f "$APP/PV_fire.png"
+          test -f "$APP/PV_jump.png"
+          test -f "$APP/PV_extra.png"
+
           test -f "$APP/game.droid"
           test -f "$APP/options.ini"
           test -f "$APP/localization.json"
@@ -946,7 +1193,7 @@ jobs:
 
           cp -R "$APP" work/Payload/PostVoid.app
 
-          rm -f out/POST-VOID-iOS-v3-EMERGENCY-unsigned.ipa
+          rm -f out/POST-VOID-iOS-v4-GLFIX-ICON-BUTTONS-unsigned.ipa
 
           ditto \
             -c \
@@ -954,18 +1201,18 @@ jobs:
             --sequesterRsrc \
             --keepParent \
             work/Payload \
-            out/POST-VOID-iOS-v3-EMERGENCY-unsigned.ipa
+            out/POST-VOID-iOS-v4-GLFIX-ICON-BUTTONS-unsigned.ipa
 
-          test -s out/POST-VOID-iOS-v3-EMERGENCY-unsigned.ipa
+          test -s out/POST-VOID-iOS-v4-GLFIX-ICON-BUTTONS-unsigned.ipa
 
           echo "IPA ready:"
-          ls -lh out/POST-VOID-iOS-v3-EMERGENCY-unsigned.ipa
+          ls -lh out/POST-VOID-iOS-v4-GLFIX-ICON-BUTTONS-unsigned.ipa
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: POST-VOID-iOS-v3-EMERGENCY
-          path: out/POST-VOID-iOS-v3-EMERGENCY-unsigned.ipa
+          name: POST-VOID-iOS-v4-GLFIX-ICON-BUTTONS
+          path: out/POST-VOID-iOS-v4-GLFIX-ICON-BUTTONS-unsigned.ipa
           if-no-files-found: error
           compression-level: 0
 
