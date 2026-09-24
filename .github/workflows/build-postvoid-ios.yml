@@ -844,6 +844,8 @@ jobs:
         run: |
           set -euo pipefail
 
+          echo "EMERGENCY BUILD: using built-in silent audio backend to bypass iOS miniaudio compile failure."
+
           rm -rf work/build
 
           cmake \
@@ -857,7 +859,7 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DPLATFORM=cli \
             -DBACKEND=sdl2 \
-            -DAUDIO_BACKEND=miniaudio \
+            -DAUDIO_BACKEND=none \
             -DENABLE_WAD14=ON \
             -DENABLE_WAD16=ON \
             -DENABLE_WAD17=ON \
@@ -944,7 +946,7 @@ jobs:
 
           cp -R "$APP" work/Payload/PostVoid.app
 
-          rm -f out/POST-VOID-iOS-v2-FASTFIX-unsigned.ipa
+          rm -f out/POST-VOID-iOS-v3-EMERGENCY-unsigned.ipa
 
           ditto \
             -c \
@@ -952,18 +954,18 @@ jobs:
             --sequesterRsrc \
             --keepParent \
             work/Payload \
-            out/POST-VOID-iOS-v2-FASTFIX-unsigned.ipa
+            out/POST-VOID-iOS-v3-EMERGENCY-unsigned.ipa
 
-          test -s out/POST-VOID-iOS-v2-FASTFIX-unsigned.ipa
+          test -s out/POST-VOID-iOS-v3-EMERGENCY-unsigned.ipa
 
           echo "IPA ready:"
-          ls -lh out/POST-VOID-iOS-v2-FASTFIX-unsigned.ipa
+          ls -lh out/POST-VOID-iOS-v3-EMERGENCY-unsigned.ipa
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: POST-VOID-iOS-v2-FASTFIX
-          path: out/POST-VOID-iOS-v2-FASTFIX-unsigned.ipa
+          name: POST-VOID-iOS-v3-EMERGENCY
+          path: out/POST-VOID-iOS-v3-EMERGENCY-unsigned.ipa
           if-no-files-found: error
           compression-level: 0
 
