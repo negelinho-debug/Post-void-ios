@@ -25,12 +25,23 @@ jobs:
         run: |
           set -euo pipefail
 
-          python3 -m pip install \
+          echo "Creating isolated Python environment..."
+
+          python3 -m venv \
+            "$RUNNER_TEMP/postvoid-v17-venv"
+
+          source \
+            "$RUNNER_TEMP/postvoid-v17-venv/bin/activate"
+
+          python -m pip install \
             --quiet \
-            --user \
+            --upgrade pip
+
+          python -m pip install \
+            --quiet \
             pyyaml
 
-          python3 <<'PY'
+          python <<'PY'
           import os
           import subprocess
           from pathlib import Path
@@ -39,8 +50,15 @@ jobs:
 
 
           # ---------------------------------------------------------
-          # Known-good POST VOID iOS v16 workflow.
-          # This is the version that already reached room_menu.
+          # Last working v16.
+          #
+          # This is the version that already:
+          # - boots the game
+          # - loads the full POST VOID data
+          # - has framebuffer fixes
+          # - has touch controls
+          # - passes ControllerDisconnected
+          # - reaches room_menu
           # ---------------------------------------------------------
 
           V16_COMMIT = (
@@ -61,8 +79,13 @@ jobs:
               print(
                   ">>>",
                   command
-                  if isinstance(command, str)
-                  else " ".join(command)
+                  if isinstance(
+                      command,
+                      str
+                  )
+                  else " ".join(
+                      command
+                  )
               )
 
               return subprocess.run(
@@ -80,7 +103,9 @@ jobs:
               if not env_path:
                   return
 
-              path = Path(env_path)
+              path = Path(
+                  env_path
+              )
 
               if not path.exists():
                   return
@@ -102,10 +127,10 @@ jobs:
 
                   key = key.strip()
 
-                  if not key:
-                      continue
-
-                  os.environ[key] = value
+                  if key:
+                      os.environ[
+                          key
+                      ] = value
 
 
           def run_shell_step(
@@ -138,54 +163,26 @@ jobs:
               refresh_github_env()
 
 
-          def replace_once(
-              path,
-              old,
-              new
-          ):
-              path = Path(path)
-
-              data = path.read_text()
-
-              if old not in data:
-                  raise SystemExit(
-                      "v17 patch anchor missing "
-                      f"in {path}:\n"
-                      f"{old[:200]}"
-                  )
-
-              path.write_text(
-                  data.replace(
-                      old,
-                      new,
-                      1
-                  )
-              )
-
-
-          # ---------------------------------------------------------
-          # V17 PATCH
-          #
-          # v16 reached room_menu but POST VOID was repeatedly
-          # requesting matrix_build and 3D GPU state functions that
-          # Butterscotch did not implement.
-          # ---------------------------------------------------------
-
           def apply_v17_patch():
 
               print()
               print(
-                  "========================================================"
+                  "=" * 72
               )
 
               print(
-                  "APPLYING POST VOID v17 MATRIX / 3D MENU FIX"
+                  "APPLYING POST VOID v17 "
+                  "MATRIX / 3D MENU FIX"
               )
 
               print(
-                  "========================================================"
+                  "=" * 72
               )
 
+
+              # -----------------------------------------------------
+              # vm_builtins.c
+              # -----------------------------------------------------
 
               vm = Path(
                   "work/Butterscotch/"
@@ -196,7 +193,8 @@ jobs:
 
 
               # -----------------------------------------------------
-              # OpenGL ES definitions for depth-test functions.
+              # OpenGLES definitions needed by the
+              # z-test / z-write compatibility functions.
               # -----------------------------------------------------
 
               include_anchor = (
@@ -210,7 +208,10 @@ jobs:
                   '#endif\n'
               )
 
-              if include_anchor not in data:
+              if (
+                  include_anchor
+                  not in data
+              ):
                   raise SystemExit(
                       "v17 include anchor missing"
                   )
@@ -223,9 +224,7 @@ jobs:
 
 
               # -----------------------------------------------------
-              # GameMaker-compatible matrix_build().
-              #
-              # Formula matches GameMaker's runtime.
+              # GameMaker matrix_build()
               # -----------------------------------------------------
 
               matrix_anchor = '''static RValue builtin_matrix_build_identity(MAYBE_UNUSED VMContext *ctx, MAYBE_UNUSED RValue *args, MAYBE_UNUSED int32_t argCount) {
@@ -251,6 +250,7 @@ jobs:
                   RValue_makeUndefined()
               );
 
+
               GMLReal x =
                   RValue_toReal(
                       args[0]
@@ -273,8 +273,9 @@ jobs:
 
 
               /*
-               * GameMaker WebGL runtime negates
-               * matrix_build rotation angles.
+               * Match GameMaker's matrix_build:
+               * rotation angles are internally
+               * converted to negative radians.
                */
 
               GMLReal xr =
@@ -322,6 +323,7 @@ jobs:
                       xr
                   );
 
+
               GMLReal sinh =
                   GMLReal_sin(
                       yr
@@ -331,6 +333,7 @@ jobs:
                   GMLReal_cos(
                       yr
                   );
+
 
               GMLReal sinr =
                   GMLReal_sin(
@@ -473,6 +476,11 @@ jobs:
                   1.0f;
 
 
+              /*
+               * Newer GameMaker builds can pass a
+               * destination matrix as argument 10.
+               */
+
               if (
                   argCount == 10
               ) {
@@ -524,8 +532,8 @@ jobs:
 
 
           /*
-           * POST VOID enables and disables depth testing
-           * while drawing its 3D menu and gameplay.
+           * POST VOID changes depth-test state when
+           * rendering menu geometry and gameplay.
            */
 
           static RValue builtin_postvoid_gpu_set_ztestenable(
@@ -537,6 +545,7 @@ jobs:
               if (
                   argCount < 1
               ) {
+
                   return
                       RValue_makeUndefined();
               }
@@ -574,6 +583,10 @@ jobs:
           }
 
 
+          /*
+           * Depth-buffer writes.
+           */
+
           static RValue builtin_postvoid_gpu_set_zwriteenable(
               MAYBE_UNUSED VMContext *ctx,
               RValue *args,
@@ -583,6 +596,7 @@ jobs:
               if (
                   argCount < 1
               ) {
+
                   return
                       RValue_makeUndefined();
               }
@@ -607,12 +621,10 @@ jobs:
 
 
           /*
-           * These helpers are called by the newer
-           * GameMaker runtime used by POST VOID.
+           * Small GameMaker compatibility helpers.
            *
-           * They are not required to construct the
-           * matrices / geometry, so prevent them from
-           * becoming unknown functions for now.
+           * These calls do not need to return data
+           * needed by the current POST VOID scene.
            */
 
           static RValue builtin_postvoid_compat_noop(
@@ -634,6 +646,7 @@ jobs:
 
               Matrix4f id;
 
+
               return
                   RValue_makeArray(
                       matrixToGml(
@@ -646,9 +659,14 @@ jobs:
           }'''
 
 
-              if matrix_anchor not in data:
+              if (
+                  matrix_anchor
+                  not in data
+              ):
+
                   raise SystemExit(
-                      "matrix_build insertion anchor missing"
+                      "matrix_build insertion "
+                      "anchor missing"
                   )
 
 
@@ -660,14 +678,23 @@ jobs:
 
 
               # -----------------------------------------------------
-              # Register the new functions.
+              # Register v17 functions.
               # -----------------------------------------------------
 
               register_anchor = '''    VM_registerBuiltin(ctx, "matrix_build_identity", builtin_matrix_build_identity);'''
 
 
-              register_code = '''    VM_registerBuiltin(ctx, "matrix_build", builtin_matrix_build);
-              VM_registerBuiltin(ctx, "matrix_build_identity", builtin_matrix_build_identity);
+              register_code = '''    VM_registerBuiltin(
+                  ctx,
+                  "matrix_build",
+                  builtin_matrix_build
+              );
+
+              VM_registerBuiltin(
+                  ctx,
+                  "matrix_build_identity",
+                  builtin_matrix_build_identity
+              );
 
               VM_registerBuiltin(
                   ctx,
@@ -712,9 +739,14 @@ jobs:
               );'''
 
 
-              if register_anchor not in data:
+              if (
+                  register_anchor
+                  not in data
+              ):
+
                   raise SystemExit(
-                      "v17 builtin registration anchor missing"
+                      "v17 builtin registration "
+                      "anchor missing"
                   )
 
 
@@ -731,14 +763,12 @@ jobs:
 
 
               # -----------------------------------------------------
-              # v16 jumped from epilepsy -> menu after only
-              # 30 frames.
+              # V16 debugging fallback was intentionally
+              # very aggressive.
               #
-              # That was useful for debugging but could skip
-              # important POST VOID setup.
-              #
-              # Give the real game 60 seconds at 60 FPS before
-              # the emergency fallback can trigger.
+              # Don't jump epilepsy -> menu in 30 frames.
+              # Give POST VOID's actual initialization
+              # enough time to finish.
               # -----------------------------------------------------
 
               runner_path = Path(
@@ -746,29 +776,32 @@ jobs:
                   "src/runner.c"
               )
 
-              runner = runner_path.read_text()
+
+              runner_data =
+                  runner_path.read_text()
 
 
               if (
                   "iosBootRoomFrames > 30"
-                  in runner
-              ) {
+                  in runner_data
+              ):
 
-                  runner = runner.replace(
-                      "iosBootRoomFrames > 30",
-                      "iosBootRoomFrames > 3600",
-                      1
-                  );
+                  runner_data =
+                      runner_data.replace(
+                          "iosBootRoomFrames > 30",
+                          "iosBootRoomFrames > 3600",
+                          1
+                      )
 
 
               runner_path.write_text(
-                  runner
+                  runner_data
               )
 
 
               # -----------------------------------------------------
-              # Use a clean v17 save directory and stop
-              # runtime.log from becoming hundreds of MB.
+              # Fresh save directory for v17.
+              # Also avoid enormous runtime.log spam.
               # -----------------------------------------------------
 
               main_path = Path(
@@ -776,64 +809,89 @@ jobs:
                   "src/cli/main.c"
               )
 
-              main = main_path.read_text()
+
+              main_data =
+                  main_path.read_text()
 
 
-              main = main.replace(
-                  "Documents/PostVoidV16",
-                  "Documents/PostVoidV17"
-              )
+              main_data =
+                  main_data.replace(
+                      "Documents/PostVoidV16",
+                      "Documents/PostVoidV17"
+                  )
 
 
-              main = main.replace(
-                  "args.alwaysLogUnknownFunctions = true;",
-                  "args.alwaysLogUnknownFunctions = false;",
-                  1
-              )
+              main_data =
+                  main_data.replace(
+                      (
+                          "args."
+                          "alwaysLogUnknownFunctions "
+                          "= true;"
+                      ),
+                      (
+                          "args."
+                          "alwaysLogUnknownFunctions "
+                          "= false;"
+                      ),
+                      1
+                  )
 
 
-              main = main.replace(
-                  "args.alwaysLogStubbedFunctions = true;",
-                  "args.alwaysLogStubbedFunctions = false;",
-                  1
-              )
+              main_data =
+                  main_data.replace(
+                      (
+                          "args."
+                          "alwaysLogStubbedFunctions "
+                          "= true;"
+                      ),
+                      (
+                          "args."
+                          "alwaysLogStubbedFunctions "
+                          "= false;"
+                      ),
+                      1
+                  )
 
 
               main_path.write_text(
-                  main
+                  main_data
               )
 
 
               print(
-                  "v17 patch complete"
+                  "POST VOID v17 patch complete"
               )
 
 
           # ---------------------------------------------------------
-          # Read the exact old v16 workflow from git history.
+          # Load the exact known-good v16 workflow
+          # directly from git history.
           # ---------------------------------------------------------
 
+          print()
           print(
               "Loading known-good v16 workflow..."
           )
 
 
-          raw_workflow = subprocess.check_output(
-              [
-                  "git",
-                  "show",
-                  (
-                      f"{V16_COMMIT}:"
-                      f"{WORKFLOW_PATH}"
-                  )
-              ],
-              text=True
-          )
+          raw_workflow =
+              subprocess.check_output(
+                  [
+                      "git",
+                      "show",
+                      (
+                          f"{V16_COMMIT}:"
+                          f"{WORKFLOW_PATH}"
+                      )
+                  ],
+                  text=True
+              )
 
 
-          workflow = yaml.safe_load(
-              raw_workflow
-          )
+          workflow =
+              yaml.safe_load(
+                  raw_workflow
+              )
 
 
           steps = (
@@ -847,20 +905,29 @@ jobs:
           )
 
 
-          create_step_seen = False
+          create_step_seen =
+              False
 
 
           for step in steps:
 
-              name = step.get(
-                  "name",
-                  "<unnamed>"
-              )
+              name =
+                  step.get(
+                      "name",
+                      "<unnamed>"
+                  )
 
 
-              # Actions like checkout/upload-artifact are
-              # handled by THIS wrapper workflow.
-              if "run" not in step:
+              # We run only the shell steps.
+              #
+              # checkout/upload-artifact are performed
+              # by this outer workflow instead.
+
+              if (
+                  "run"
+                  not in step
+              ):
+
                   print(
                       "Skipping action step:",
                       name
@@ -869,9 +936,10 @@ jobs:
                   continue
 
 
-              script = step[
-                  "run"
-              ]
+              script =
+                  step[
+                      "run"
+                  ]
 
 
               run_shell_step(
@@ -880,48 +948,63 @@ jobs:
               )
 
 
+              # Apply v17 immediately after v16 has
+              # created/patched the Butterscotch source.
+
               if (
                   name ==
                   "Create iOS runner project"
               ):
 
-                  create_step_seen = True
+                  create_step_seen =
+                      True
 
                   apply_v17_patch()
 
 
-          if not create_step_seen:
+          if (
+              not create_step_seen
+          ):
+
               raise SystemExit(
-                  "ERROR: v16 Create iOS runner "
-                  "project step was not found"
+                  "ERROR: Create iOS runner "
+                  "project step was not found "
+                  "inside v16"
               )
 
 
           # ---------------------------------------------------------
-          # The old Build IPA step names its result v16.
-          # Rename only the final IPA.
+          # Rename final v16-named IPA to v17.
           # ---------------------------------------------------------
 
           old_ipa = Path(
               "out/"
-              "POST-VOID-iOS-v16-WINDOWS-INPUTFIX-unsigned.ipa"
+              "POST-VOID-iOS-v16-"
+              "WINDOWS-INPUTFIX-unsigned.ipa"
           )
 
 
           new_ipa = Path(
               "out/"
-              "POST-VOID-iOS-v17-MATRIX-MENUFIX-unsigned.ipa"
+              "POST-VOID-iOS-v17-"
+              "MATRIX-MENUFIX-unsigned.ipa"
           )
 
 
-          if not old_ipa.exists():
+          if (
+              not old_ipa.exists()
+          ):
+
               raise SystemExit(
-                  "ERROR: v16 base build completed "
-                  "without producing its IPA"
+                  "ERROR: base build completed "
+                  "without producing the v16 IPA"
               )
 
 
-          if new_ipa.exists():
+          if (
+              new_ipa.exists()
+          ):
+
               new_ipa.unlink()
 
 
@@ -932,7 +1015,7 @@ jobs:
 
           print()
           print(
-              "========================================"
+              "=" * 72
           )
 
           print(
@@ -940,7 +1023,7 @@ jobs:
           )
 
           print(
-              "========================================"
+              "=" * 72
           )
 
           print(
@@ -948,7 +1031,10 @@ jobs:
           )
 
           print(
-              f"{new_ipa.stat().st_size / 1024 / 1024:.1f} MB"
+              (
+                  f"{new_ipa.stat().st_size "
+                  "/ 1024 / 1024:.1f} MB"
+              )
           )
 
           PY
