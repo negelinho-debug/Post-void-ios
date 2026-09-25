@@ -153,6 +153,55 @@ jobs:
           ls -lh work/game/game.droid
           find work/game -maxdepth 2 -type f -print
 
+      - name: Install original Android companion assets
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # IMPORTANT:
+          # The full Android port keeps localization/options/controller DB
+          # in the OUTER APK assets, not only inside files/game_data.apk.
+          # Using only the inner game_data.apk is why iOS showed:
+          #   (Unknown key: 'ControllerDisconnected')
+          #
+          # Copy the exact outer assets into the iOS game bundle source.
+
+          for name in \
+            localization.json \
+            localization_ar_test.json \
+            options.ini \
+            gamecontrollerdb.txt
+          do
+            if unzip -l "$APK" "assets/$name" >/dev/null 2>&1; then
+              unzip -p "$APK" "assets/$name" > "work/game/$name"
+              test -s "work/game/$name"
+              echo "Installed outer APK asset: $name"
+            else
+              echo "Outer APK asset not found: $name"
+            fi
+          done
+
+          rm -rf work/outer_assets
+          mkdir -p work/outer_assets
+
+          if unzip -l "$APK" 'assets/fonts/*' \
+            | grep -q 'assets/fonts/'; then
+            unzip -oq "$APK" 'assets/fonts/*' -d work/outer_assets
+
+            if [ -d work/outer_assets/assets/fonts ]; then
+              rm -rf work/game/fonts
+              cp -R work/outer_assets/assets/fonts work/game/fonts
+              echo "Installed outer APK fonts"
+            fi
+          fi
+
+          echo "Companion assets now in work/game:"
+          ls -lh \
+            work/game/localization.json \
+            work/game/options.ini \
+            work/game/gamecontrollerdb.txt \
+            2>/dev/null || true
+
       - name: Patch POST VOID localization for iOS
         shell: bash
         run: |
@@ -166,6 +215,11 @@ jobs:
               Path("work/game/localization.json"),
               Path("work/game/localization_ar_test.json"),
           ]
+
+          if not files[0].exists():
+              raise SystemExit(
+                  "ERROR: localization.json is still missing after outer APK extraction"
+              )
 
           defaults = {
               "ControllerDisconnected": "CONTROLLER DISCONNECTED",
@@ -573,6 +627,134 @@ jobs:
               'src/loop.c',
               loop_hostfb_anchor,
               loop_hostfb_replacement,
+          )
+
+
+          # ----------------------------------------------------------
+          # POST VOID iOS v14:
+          # 1) Always read localization from the fresh app bundle on iOS.
+          #    Butterscotch normally prefers Documents/PostVoid first, so an
+          #    old localization.json from v12/v13 can survive app reinstalls.
+          # 2) Force slot 0 to look like the XInput controller POST VOID's
+          #    mobile port expects, directly at the GameMaker builtin layer.
+          # ----------------------------------------------------------
+
+          ofs_anchor = '''static char* resolveForRead(OverlayFileSystem* ofs, const char* relativePath) {
+              char* normalized = normalizePath(relativePath);
+              if (isAbsolute(normalized)) return normalized;
+
+              // Check if the path is already resolved'''
+
+          ofs_replacement = '''static char* resolveForRead(OverlayFileSystem* ofs, const char* relativePath) {
+              char* normalized = normalizePath(relativePath);
+              if (isAbsolute(normalized)) return normalized;
+
+          #ifdef PLATFORM_IOS
+              /*
+               * Do not allow a stale copy in Documents/PostVoid to override
+               * the localization bundled with the current IPA.
+               */
+              if (
+                  strcmp(normalized, "localization.json") == 0 ||
+                  strcmp(normalized, "localization_ar_test.json") == 0
+              ) {
+                  char* bundleFull = joinPath(ofs->bundlePath, normalized);
+                  free(normalized);
+                  return bundleFull;
+              }
+          #endif
+
+              // Check if the path is already resolved'''
+
+          replace(
+              'src/overlay_file_system.c',
+              ofs_anchor,
+              ofs_replacement,
+          )
+
+          gp_count_anchor = '''static RValue builtin_gamepad_get_device_count(VMContext* ctx, RValue* args, int32_t argCount) {
+              Runner* runner = ctx->runner;
+              if (runner == NULL || runner->gamepads == NULL) return RValue_makeReal(0.0);
+              return RValue_makeReal((GMLReal) RunnerGamepad_getDeviceCount(runner->gamepads));
+          }'''
+
+          gp_count_replacement = '''static RValue builtin_gamepad_get_device_count(VMContext* ctx, RValue* args, int32_t argCount) {
+              Runner* runner = ctx->runner;
+              if (runner == NULL || runner->gamepads == NULL) return RValue_makeReal(0.0);
+
+          #ifdef PLATFORM_IOS
+              /*
+               * Match the Android POST VOID hook: report the full GameMaker
+               * gamepad slot range while slot 0 is our synthetic touch pad.
+               */
+              return RValue_makeReal((GMLReal) MAX_GAMEPADS);
+          #else
+              return RValue_makeReal((GMLReal) RunnerGamepad_getDeviceCount(runner->gamepads));
+          #endif
+          }'''
+
+          replace(
+              'src/vm_builtins.c',
+              gp_count_anchor,
+              gp_count_replacement,
+          )
+
+          gp_connected_anchor = '''static RValue builtin_gamepad_is_connected(VMContext* ctx, RValue* args, int32_t argCount) {
+              Runner* runner = ctx->runner;
+              if (runner == NULL || runner->gamepads == NULL) return RValue_makeBool(false);
+              int32_t device = RValue_toInt32(args[0]);
+              return RValue_makeBool(RunnerGamepad_isConnected(runner->gamepads, device));
+          }'''
+
+          gp_connected_replacement = '''static RValue builtin_gamepad_is_connected(VMContext* ctx, RValue* args, int32_t argCount) {
+              Runner* runner = ctx->runner;
+              if (runner == NULL || runner->gamepads == NULL) return RValue_makeBool(false);
+              int32_t device = RValue_toInt32(args[0]);
+
+          #ifdef PLATFORM_IOS
+              if (device == 0) {
+                  return RValue_makeBool(true);
+              }
+          #endif
+
+              return RValue_makeBool(RunnerGamepad_isConnected(runner->gamepads, device));
+          }'''
+
+          replace(
+              'src/vm_builtins.c',
+              gp_connected_anchor,
+              gp_connected_replacement,
+          )
+
+          gp_desc_anchor = '''static RValue builtin_gamepad_get_description(VMContext* ctx, RValue* args, int32_t argCount) {
+              Runner* runner = ctx->runner;
+              if (runner == NULL || runner->gamepads == NULL) return RValue_makeOwnedString(safeStrdup(""));
+              int32_t device = RValue_toInt32(args[0]);
+              const char* desc = RunnerGamepad_getDescription(runner->gamepads, device);
+              return RValue_makeOwnedString(safeStrdup(desc));
+          }'''
+
+          gp_desc_replacement = '''static RValue builtin_gamepad_get_description(VMContext* ctx, RValue* args, int32_t argCount) {
+              Runner* runner = ctx->runner;
+              if (runner == NULL || runner->gamepads == NULL) return RValue_makeOwnedString(safeStrdup(""));
+              int32_t device = RValue_toInt32(args[0]);
+
+          #ifdef PLATFORM_IOS
+              if (device == 0) {
+                  return RValue_makeOwnedString(
+                      safeStrdup("XInput STANDARD GAMEPAD")
+                  );
+              }
+          #endif
+
+              const char* desc = RunnerGamepad_getDescription(runner->gamepads, device);
+              return RValue_makeOwnedString(safeStrdup(desc));
+          }'''
+
+          replace(
+              'src/vm_builtins.c',
+              gp_desc_anchor,
+              gp_desc_replacement,
           )
 
           # ----------------------------------------------------------
@@ -1585,7 +1767,7 @@ jobs:
 
           cp -R "$APP" work/Payload/PostVoid.app
 
-          rm -f out/POST-VOID-iOS-v13-CONTROLLERFIX-ICON-BUTTONS-unsigned.ipa
+          rm -f out/POST-VOID-iOS-v15-OUTER-ASSETS-CONTROLLERFIX-unsigned.ipa
 
           ditto \
             -c \
@@ -1593,18 +1775,18 @@ jobs:
             --sequesterRsrc \
             --keepParent \
             work/Payload \
-            out/POST-VOID-iOS-v13-CONTROLLERFIX-ICON-BUTTONS-unsigned.ipa
+            out/POST-VOID-iOS-v15-OUTER-ASSETS-CONTROLLERFIX-unsigned.ipa
 
-          test -s out/POST-VOID-iOS-v13-CONTROLLERFIX-ICON-BUTTONS-unsigned.ipa
+          test -s out/POST-VOID-iOS-v15-OUTER-ASSETS-CONTROLLERFIX-unsigned.ipa
 
           echo "IPA ready:"
-          ls -lh out/POST-VOID-iOS-v13-CONTROLLERFIX-ICON-BUTTONS-unsigned.ipa
+          ls -lh out/POST-VOID-iOS-v15-OUTER-ASSETS-CONTROLLERFIX-unsigned.ipa
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: POST-VOID-iOS-v13-CONTROLLERFIX-ICON-BUTTONS
-          path: out/POST-VOID-iOS-v13-CONTROLLERFIX-ICON-BUTTONS-unsigned.ipa
+          name: POST-VOID-iOS-v15-OUTER-ASSETS-CONTROLLERFIX
+          path: out/POST-VOID-iOS-v15-OUTER-ASSETS-CONTROLLERFIX-unsigned.ipa
           if-no-files-found: error
           compression-level: 0
 
