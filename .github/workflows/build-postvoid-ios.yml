@@ -27,19 +27,12 @@ jobs:
 
           echo "Creating isolated Python environment..."
 
-          python3 -m venv \
-            "$RUNNER_TEMP/postvoid-v17-venv"
+          python3 -m venv "$RUNNER_TEMP/postvoid-v17-venv"
 
-          source \
-            "$RUNNER_TEMP/postvoid-v17-venv/bin/activate"
+          source "$RUNNER_TEMP/postvoid-v17-venv/bin/activate"
 
-          python -m pip install \
-            --quiet \
-            --upgrade pip
-
-          python -m pip install \
-            --quiet \
-            pyyaml
+          python -m pip install --quiet --upgrade pip
+          python -m pip install --quiet pyyaml
 
           python <<'PY'
           import os
@@ -49,21 +42,7 @@ jobs:
           import yaml
 
 
-          # ---------------------------------------------------------
-          # Last working v16.
-          #
-          # This is the version that already:
-          # - boots the game
-          # - loads the full POST VOID data
-          # - has framebuffer fixes
-          # - has touch controls
-          # - passes ControllerDisconnected
-          # - reaches room_menu
-          # ---------------------------------------------------------
-
-          V16_COMMIT = (
-              "61097c8dd98d6b1ef06286209a1ad18087bac362"
-          )
+          V16_COMMIT = "61097c8dd98d6b1ef06286209a1ad18087bac362"
 
           WORKFLOW_PATH = (
               ".github/workflows/"
@@ -71,22 +50,14 @@ jobs:
           )
 
 
-          def run(
-              command,
-              **kwargs
-          ):
+          def run(command, **kwargs):
+              if isinstance(command, str):
+                  shown = command
+              else:
+                  shown = " ".join(command)
+
               print()
-              print(
-                  ">>>",
-                  command
-                  if isinstance(
-                      command,
-                      str
-                  )
-                  else " ".join(
-                      command
-                  )
-              )
+              print(">>>", shown)
 
               return subprocess.run(
                   command,
@@ -96,16 +67,12 @@ jobs:
 
 
           def refresh_github_env():
-              env_path = os.environ.get(
-                  "GITHUB_ENV"
-              )
+              env_path = os.environ.get("GITHUB_ENV")
 
               if not env_path:
                   return
 
-              path = Path(
-                  env_path
-              )
+              path = Path(env_path)
 
               if not path.exists():
                   return
@@ -120,86 +87,47 @@ jobs:
                   if "=" not in line:
                       continue
 
-                  key, value = line.split(
-                      "=",
-                      1
-                  )
-
+                  key, value = line.split("=", 1)
                   key = key.strip()
 
                   if key:
-                      os.environ[
-                          key
-                      ] = value
+                      os.environ[key] = value
 
 
-          def run_shell_step(
-              name,
-              script
-          ):
+          def run_shell_step(name, script):
               print()
-              print(
-                  "=" * 72
-              )
-
-              print(
-                  "RUNNING V16 STEP:",
-                  name
-              )
-
-              print(
-                  "=" * 72
-              )
+              print("=" * 72)
+              print("RUNNING V16 STEP:", name)
+              print("=" * 72)
 
               run(
                   [
                       "/bin/bash",
                       "-c",
-                      script
+                      script,
                   ],
-                  env=os.environ.copy()
+                  env=os.environ.copy(),
               )
 
               refresh_github_env()
 
 
           def apply_v17_patch():
-
               print()
-              print(
-                  "=" * 72
-              )
-
-              print(
-                  "APPLYING POST VOID v17 "
-                  "MATRIX / 3D MENU FIX"
-              )
-
-              print(
-                  "=" * 72
-              )
+              print("=" * 72)
+              print("APPLYING POST VOID v17 MATRIX / 3D FIX")
+              print("=" * 72)
 
 
-              # -----------------------------------------------------
-              # vm_builtins.c
-              # -----------------------------------------------------
-
-              vm = Path(
+              vm_path = Path(
                   "work/Butterscotch/"
                   "src/vm_builtins.c"
               )
 
-              data = vm.read_text()
+              data = vm_path.read_text()
 
 
-              # -----------------------------------------------------
-              # OpenGLES definitions needed by the
-              # z-test / z-write compatibility functions.
-              # -----------------------------------------------------
-
-              include_anchor = (
-                  '#include "math_compat.h"\n'
-              )
+              include_anchor = '#include "math_compat.h"\n'
 
               include_replacement = (
                   '#include "math_compat.h"\n'
@@ -208,10 +136,7 @@ jobs:
                   '#endif\n'
               )
 
-              if (
-                  include_anchor
-                  not in data
-              ):
+              if include_anchor not in data:
                   raise SystemExit(
                       "v17 include anchor missing"
                   )
@@ -219,13 +144,9 @@ jobs:
               data = data.replace(
                   include_anchor,
                   include_replacement,
-                  1
+                  1,
               )
 
-
-              # -----------------------------------------------------
-              # GameMaker matrix_build()
-              # -----------------------------------------------------
 
               matrix_anchor = '''static RValue builtin_matrix_build_identity(MAYBE_UNUSED VMContext *ctx, MAYBE_UNUSED RValue *args, MAYBE_UNUSED int32_t argCount) {
               Matrix4f id;
@@ -250,260 +171,126 @@ jobs:
                   RValue_makeUndefined()
               );
 
-
               GMLReal x =
-                  RValue_toReal(
-                      args[0]
-                  );
+                  RValue_toReal(args[0]);
 
               GMLReal y =
-                  RValue_toReal(
-                      args[1]
-                  );
+                  RValue_toReal(args[1]);
 
               GMLReal z =
-                  RValue_toReal(
-                      args[2]
-                  );
-
+                  RValue_toReal(args[2]);
 
               const GMLReal degToRad =
                   (GMLReal)M_PI /
                   (GMLReal)180.0;
 
-
-              /*
-               * Match GameMaker's matrix_build:
-               * rotation angles are internally
-               * converted to negative radians.
-               */
-
               GMLReal xr =
-                  -RValue_toReal(
-                      args[3]
-                  ) *
+                  -RValue_toReal(args[3]) *
                   degToRad;
 
               GMLReal yr =
-                  -RValue_toReal(
-                      args[4]
-                  ) *
+                  -RValue_toReal(args[4]) *
                   degToRad;
 
               GMLReal zr =
-                  -RValue_toReal(
-                      args[5]
-                  ) *
+                  -RValue_toReal(args[5]) *
                   degToRad;
 
-
               GMLReal sx =
-                  RValue_toReal(
-                      args[6]
-                  );
+                  RValue_toReal(args[6]);
 
               GMLReal sy =
-                  RValue_toReal(
-                      args[7]
-                  );
+                  RValue_toReal(args[7]);
 
               GMLReal sz =
-                  RValue_toReal(
-                      args[8]
-                  );
-
+                  RValue_toReal(args[8]);
 
               GMLReal sinp =
-                  GMLReal_sin(
-                      xr
-                  );
+                  GMLReal_sin(xr);
 
               GMLReal cosp =
-                  GMLReal_cos(
-                      xr
-                  );
-
+                  GMLReal_cos(xr);
 
               GMLReal sinh =
-                  GMLReal_sin(
-                      yr
-                  );
+                  GMLReal_sin(yr);
 
               GMLReal cosh =
-                  GMLReal_cos(
-                      yr
-                  );
-
+                  GMLReal_cos(yr);
 
               GMLReal sinr =
-                  GMLReal_sin(
-                      zr
-                  );
+                  GMLReal_sin(zr);
 
               GMLReal cosr =
-                  GMLReal_cos(
-                      zr
-                  );
-
+                  GMLReal_cos(zr);
 
               GMLReal sinrsinp =
-                  -sinr *
-                  -sinp;
+                  -sinr * -sinp;
 
               GMLReal cosrsinp =
-                  cosr *
-                  -sinp;
-
+                  cosr * -sinp;
 
               Matrix4f m;
 
-
               m.m[0] =
                   (
-                      (
-                          cosr *
-                          cosh
-                      ) +
-                      (
-                          sinrsinp *
-                          -sinh
-                      )
-                  ) *
-                  sx;
-
+                      (cosr * cosh) +
+                      (sinrsinp * -sinh)
+                  ) * sx;
 
               m.m[4] =
-                  (
-                      -sinr *
-                      cosp
-                  ) *
-                  sx;
-
+                  (-sinr * cosp) * sx;
 
               m.m[8] =
                   (
-                      (
-                          cosr *
-                          sinh
-                      ) +
-                      (
-                          sinrsinp *
-                          cosh
-                      )
-                  ) *
-                  sx;
+                      (cosr * sinh) +
+                      (sinrsinp * cosh)
+                  ) * sx;
 
-
-              m.m[12] =
-                  x;
-
+              m.m[12] = x;
 
               m.m[1] =
                   (
-                      (
-                          sinr *
-                          cosh
-                      ) +
-                      (
-                          cosrsinp *
-                          -sinh
-                      )
-                  ) *
-                  sy;
-
+                      (sinr * cosh) +
+                      (cosrsinp * -sinh)
+                  ) * sy;
 
               m.m[5] =
-                  (
-                      cosr *
-                      cosp
-                  ) *
-                  sy;
-
+                  (cosr * cosp) * sy;
 
               m.m[9] =
                   (
-                      (
-                          sinr *
-                          sinh
-                      ) +
-                      (
-                          cosrsinp *
-                          cosh
-                      )
-                  ) *
-                  sy;
+                      (sinr * sinh) +
+                      (cosrsinp * cosh)
+                  ) * sy;
 
-
-              m.m[13] =
-                  y;
-
+              m.m[13] = y;
 
               m.m[2] =
-                  (
-                      cosp *
-                      -sinh
-                  ) *
-                  sz;
-
+                  (cosp * -sinh) * sz;
 
               m.m[6] =
-                  sinp *
-                  sz;
-
+                  sinp * sz;
 
               m.m[10] =
-                  (
-                      cosp *
-                      cosh
-                  ) *
-                  sz;
+                  (cosp * cosh) * sz;
 
+              m.m[14] = z;
 
-              m.m[14] =
-                  z;
+              m.m[3] = 0.0f;
+              m.m[7] = 0.0f;
+              m.m[11] = 0.0f;
+              m.m[15] = 1.0f;
 
-
-              m.m[3] =
-                  0.0f;
-
-              m.m[7] =
-                  0.0f;
-
-              m.m[11] =
-                  0.0f;
-
-              m.m[15] =
-                  1.0f;
-
-
-              /*
-               * Newer GameMaker builds can pass a
-               * destination matrix as argument 10.
-               */
-
-              if (
-                  argCount == 10
-              ) {
-
-                  if (
-                      !rvalueIsMatrix(
-                          args[9]
-                      )
-                  ) {
+              if (argCount == 10) {
+                  if (!rvalueIsMatrix(args[9])) {
                       return
                           RValue_makeUndefined();
                   }
 
-
                   GMLArray *dest =
                       args[9].array;
 
-
-                  repeat (
-                      16,
-                      i
-                  ) {
-
+                  repeat (16, i) {
                       *GMLArray_slot(
                           dest,
                           i
@@ -513,13 +300,11 @@ jobs:
                           );
                   }
 
-
                   return
                       RValue_makeArrayWeak(
                           dest
                       );
               }
-
 
               return
                   RValue_makeArray(
@@ -531,34 +316,18 @@ jobs:
           }
 
 
-          /*
-           * POST VOID changes depth-test state when
-           * rendering menu geometry and gameplay.
-           */
-
           static RValue builtin_postvoid_gpu_set_ztestenable(
               MAYBE_UNUSED VMContext *ctx,
               RValue *args,
               int32_t argCount
           ) {
-
-              if (
-                  argCount < 1
-              ) {
-
+              if (argCount < 1) {
                   return
                       RValue_makeUndefined();
               }
 
-
           #ifdef PLATFORM_IOS
-
-              if (
-                  RValue_toBool(
-                      args[0]
-                  )
-              ) {
-
+              if (RValue_toBool(args[0])) {
                   glEnable(
                       GL_DEPTH_TEST
                   );
@@ -566,73 +335,47 @@ jobs:
                   glDepthFunc(
                       GL_LEQUAL
                   );
-
               }
               else {
-
                   glDisable(
                       GL_DEPTH_TEST
                   );
               }
-
           #endif
-
 
               return
                   RValue_makeUndefined();
           }
 
-
-          /*
-           * Depth-buffer writes.
-           */
 
           static RValue builtin_postvoid_gpu_set_zwriteenable(
               MAYBE_UNUSED VMContext *ctx,
               RValue *args,
               int32_t argCount
           ) {
-
-              if (
-                  argCount < 1
-              ) {
-
+              if (argCount < 1) {
                   return
                       RValue_makeUndefined();
               }
 
-
           #ifdef PLATFORM_IOS
-
               glDepthMask(
-                  RValue_toBool(
-                      args[0]
-                  )
+                  RValue_toBool(args[0])
                       ? GL_TRUE
                       : GL_FALSE
               );
-
           #endif
-
 
               return
                   RValue_makeUndefined();
           }
 
 
-          /*
-           * Small GameMaker compatibility helpers.
-           *
-           * These calls do not need to return data
-           * needed by the current POST VOID scene.
-           */
-
           static RValue builtin_postvoid_compat_noop(
               MAYBE_UNUSED VMContext *ctx,
               MAYBE_UNUSED RValue *args,
               MAYBE_UNUSED int32_t argCount
           ) {
-
               return
                   RValue_makeUndefined();
           }
@@ -643,9 +386,7 @@ jobs:
               MAYBE_UNUSED RValue *args,
               MAYBE_UNUSED int32_t argCount
           ) {
-
               Matrix4f id;
-
 
               return
                   RValue_makeArray(
@@ -659,27 +400,18 @@ jobs:
           }'''
 
 
-              if (
-                  matrix_anchor
-                  not in data
-              ):
-
+              if matrix_anchor not in data:
                   raise SystemExit(
                       "matrix_build insertion "
                       "anchor missing"
                   )
 
-
               data = data.replace(
                   matrix_anchor,
                   matrix_code,
-                  1
+                  1,
               )
 
-
-              # -----------------------------------------------------
-              # Register v17 functions.
-              # -----------------------------------------------------
 
               register_anchor = '''    VM_registerBuiltin(ctx, "matrix_build_identity", builtin_matrix_build_identity);'''
 
@@ -739,160 +471,112 @@ jobs:
               );'''
 
 
-              if (
-                  register_anchor
-                  not in data
-              ):
-
+              if register_anchor not in data:
                   raise SystemExit(
                       "v17 builtin registration "
                       "anchor missing"
                   )
 
-
               data = data.replace(
                   register_anchor,
                   register_code,
-                  1
+                  1,
               )
 
+              vm_path.write_text(data)
 
-              vm.write_text(
-                  data
-              )
-
-
-              # -----------------------------------------------------
-              # V16 debugging fallback was intentionally
-              # very aggressive.
-              #
-              # Don't jump epilepsy -> menu in 30 frames.
-              # Give POST VOID's actual initialization
-              # enough time to finish.
-              # -----------------------------------------------------
 
               runner_path = Path(
                   "work/Butterscotch/"
                   "src/runner.c"
               )
 
-
-              runner_data =
-                  runner_path.read_text()
-
+              runner_data = runner_path.read_text()
 
               if (
                   "iosBootRoomFrames > 30"
                   in runner_data
               ):
-
-                  runner_data =
-                      runner_data.replace(
-                          "iosBootRoomFrames > 30",
-                          "iosBootRoomFrames > 3600",
-                          1
-                      )
-
+                  runner_data = runner_data.replace(
+                      "iosBootRoomFrames > 30",
+                      "iosBootRoomFrames > 3600",
+                      1,
+                  )
 
               runner_path.write_text(
                   runner_data
               )
 
 
-              # -----------------------------------------------------
-              # Fresh save directory for v17.
-              # Also avoid enormous runtime.log spam.
-              # -----------------------------------------------------
-
               main_path = Path(
                   "work/Butterscotch/"
                   "src/cli/main.c"
               )
 
+              main_data = main_path.read_text()
 
-              main_data =
-                  main_path.read_text()
+              main_data = main_data.replace(
+                  "Documents/PostVoidV16",
+                  "Documents/PostVoidV17",
+              )
 
+              main_data = main_data.replace(
+                  (
+                      "args."
+                      "alwaysLogUnknownFunctions "
+                      "= true;"
+                  ),
+                  (
+                      "args."
+                      "alwaysLogUnknownFunctions "
+                      "= false;"
+                  ),
+                  1,
+              )
 
-              main_data =
-                  main_data.replace(
-                      "Documents/PostVoidV16",
-                      "Documents/PostVoidV17"
-                  )
-
-
-              main_data =
-                  main_data.replace(
-                      (
-                          "args."
-                          "alwaysLogUnknownFunctions "
-                          "= true;"
-                      ),
-                      (
-                          "args."
-                          "alwaysLogUnknownFunctions "
-                          "= false;"
-                      ),
-                      1
-                  )
-
-
-              main_data =
-                  main_data.replace(
-                      (
-                          "args."
-                          "alwaysLogStubbedFunctions "
-                          "= true;"
-                      ),
-                      (
-                          "args."
-                          "alwaysLogStubbedFunctions "
-                          "= false;"
-                      ),
-                      1
-                  )
-
+              main_data = main_data.replace(
+                  (
+                      "args."
+                      "alwaysLogStubbedFunctions "
+                      "= true;"
+                  ),
+                  (
+                      "args."
+                      "alwaysLogStubbedFunctions "
+                      "= false;"
+                  ),
+                  1,
+              )
 
               main_path.write_text(
                   main_data
               )
-
 
               print(
                   "POST VOID v17 patch complete"
               )
 
 
-          # ---------------------------------------------------------
-          # Load the exact known-good v16 workflow
-          # directly from git history.
-          # ---------------------------------------------------------
-
           print()
           print(
               "Loading known-good v16 workflow..."
           )
 
+          raw_workflow = subprocess.check_output(
+              [
+                  "git",
+                  "show",
+                  (
+                      f"{V16_COMMIT}:"
+                      f"{WORKFLOW_PATH}"
+                  ),
+              ],
+              text=True,
+          )
 
-          raw_workflow =
-              subprocess.check_output(
-                  [
-                      "git",
-                      "show",
-                      (
-                          f"{V16_COMMIT}:"
-                          f"{WORKFLOW_PATH}"
-                      )
-                  ],
-                  text=True
-              )
-
-
-          workflow =
-              yaml.safe_load(
-                  raw_workflow
-              )
-
+          workflow = yaml.safe_load(
+              raw_workflow
+          )
 
           steps = (
               workflow[
@@ -904,68 +588,38 @@ jobs:
               ]
           )
 
-
-          create_step_seen =
-              False
-
+          create_step_seen = False
 
           for step in steps:
+              name = step.get(
+                  "name",
+                  "<unnamed>",
+              )
 
-              name =
-                  step.get(
-                      "name",
-                      "<unnamed>"
-                  )
-
-
-              # We run only the shell steps.
-              #
-              # checkout/upload-artifact are performed
-              # by this outer workflow instead.
-
-              if (
-                  "run"
-                  not in step
-              ):
-
+              if "run" not in step:
                   print(
                       "Skipping action step:",
-                      name
+                      name,
                   )
-
                   continue
 
-
-              script =
-                  step[
-                      "run"
-                  ]
-
+              script = step["run"]
 
               run_shell_step(
                   name,
-                  script
+                  script,
               )
-
-
-              # Apply v17 immediately after v16 has
-              # created/patched the Butterscotch source.
 
               if (
                   name ==
                   "Create iOS runner project"
               ):
-
-                  create_step_seen =
-                      True
+                  create_step_seen = True
 
                   apply_v17_patch()
 
 
-          if (
-              not create_step_seen
-          ):
-
+          if not create_step_seen:
               raise SystemExit(
                   "ERROR: Create iOS runner "
                   "project step was not found "
@@ -973,16 +627,11 @@ jobs:
               )
 
 
-          # ---------------------------------------------------------
-          # Rename final v16-named IPA to v17.
-          # ---------------------------------------------------------
-
           old_ipa = Path(
               "out/"
               "POST-VOID-iOS-v16-"
               "WINDOWS-INPUTFIX-unsigned.ipa"
           )
-
 
           new_ipa = Path(
               "out/"
@@ -990,52 +639,31 @@ jobs:
               "MATRIX-MENUFIX-unsigned.ipa"
           )
 
-
-          if (
-              not old_ipa.exists()
-          ):
-
+          if not old_ipa.exists():
               raise SystemExit(
                   "ERROR: base build completed "
                   "without producing the v16 IPA"
               )
 
-
-          if (
-              new_ipa.exists()
-          ):
-
+          if new_ipa.exists():
               new_ipa.unlink()
-
 
           old_ipa.rename(
               new_ipa
           )
 
+          size_mb = (
+              new_ipa.stat().st_size /
+              1024 /
+              1024
+          )
 
           print()
-          print(
-              "=" * 72
-          )
-
-          print(
-              "POST VOID v17 IPA READY"
-          )
-
-          print(
-              "=" * 72
-          )
-
-          print(
-              new_ipa
-          )
-
-          print(
-              (
-                  f"{new_ipa.stat().st_size "
-                  "/ 1024 / 1024:.1f} MB"
-              )
-          )
+          print("=" * 72)
+          print("POST VOID v17 IPA READY")
+          print("=" * 72)
+          print(new_ipa)
+          print(f"{size_mb:.1f} MB")
 
           PY
 
