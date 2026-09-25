@@ -153,6 +153,49 @@ jobs:
           ls -lh work/game/game.droid
           find work/game -maxdepth 2 -type f -print
 
+      - name: Patch POST VOID localization for iOS
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          files = [
+              Path("work/game/localization.json"),
+              Path("work/game/localization_ar_test.json"),
+          ]
+
+          defaults = {
+              "ControllerDisconnected": "CONTROLLER DISCONNECTED",
+              "PressToContinue": "press {Select} to continue",
+          }
+
+          for path in files:
+              if not path.exists():
+                  print(f"Skipping missing {path}")
+                  continue
+
+              data = json.loads(path.read_text(encoding="utf-8-sig"))
+              changed = 0
+
+              for language, table in data.items():
+                  if not isinstance(table, dict):
+                      continue
+                  for key, value in defaults.items():
+                      if key not in table:
+                          table[key] = value
+                          changed += 1
+
+              path.write_text(
+                  json.dumps(data, ensure_ascii=False, indent=2),
+                  encoding="utf-8"
+              )
+
+              print(f"{path}: added {changed} missing localization entries")
+          PY
+
       - name: Extract original POST VOID icon and buttons
         shell: bash
         run: |
@@ -886,6 +929,12 @@ jobs:
           static IOSTouchButton iosExtra = {0};
           static IOSTouchButton iosPause = {0};
 
+          /*
+           * POST VOID expects controller slot 0 to exist during room_preload,
+           * plus repeated "gamepad discovered" events during startup.
+           */
+          static int iosDiscoveryFrames = 0;
+
           static float iosClamp(float value) {
               if (value < -1.0f) return -1.0f;
               if (value > 1.0f) return 1.0f;
@@ -1023,7 +1072,7 @@ jobs:
 
               strncpy(
                   slot->description,
-                  "POST VOID iOS Touch",
+                  "XInput STANDARD GAMEPAD",
                   sizeof(slot->description) - 1
               );
               slot->description[sizeof(slot->description) - 1] = '\0';
@@ -1074,6 +1123,16 @@ jobs:
 
                   if (!slot->buttonDown[btn] && wasDown)
                       slot->buttonReleased[btn] = true;
+              }
+
+              /*
+               * RunnerGamepad_beginFrame copies connected to connectedPrev
+               * before polling. Force the startup discovered transition so
+               * POST VOID registers the synthetic touch controller.
+               */
+              if (iosDiscoveryFrames < 240) {
+                  slot->connectedPrev = false;
+                  iosDiscoveryFrames++;
               }
 
               g_runner->gamepads->connectedCount = 1;
@@ -1140,6 +1199,39 @@ jobs:
           s = s.replace(
               end_anchor,
               end_replacement,
+              1,
+          )
+
+          platform_funcs_anchor = (
+              "void platformInitFunctions(Runner *runner) {\n"
+              "    g_runner = runner;\n"
+              "    runner->windowHasFocus = platformGetWindowFocus;\n"
+              "    runner->setCursor = platformSetCursor;\n"
+              "    runner->currentCursor = GML_CR_DEFAULT;\n"
+              "}"
+          )
+
+          platform_funcs_replacement = (
+              "void platformInitFunctions(Runner *runner) {\n"
+              "    g_runner = runner;\n"
+              "    runner->windowHasFocus = platformGetWindowFocus;\n"
+              "    runner->setCursor = platformSetCursor;\n"
+              "    runner->currentCursor = GML_CR_DEFAULT;\n"
+              "\n"
+              "#ifdef PLATFORM_IOS\n"
+              "    iosApplyTouchGamepad();\n"
+              "#endif\n"
+              "}"
+          )
+
+          if platform_funcs_anchor not in s:
+              raise SystemExit(
+                  "Touch bootstrap anchor missing in platformInitFunctions"
+              )
+
+          s = s.replace(
+              platform_funcs_anchor,
+              platform_funcs_replacement,
               1,
           )
 
@@ -1493,7 +1585,7 @@ jobs:
 
           cp -R "$APP" work/Payload/PostVoid.app
 
-          rm -f out/POST-VOID-iOS-v12-FRAMEBUFFERFIX2-ICON-BUTTONS-unsigned.ipa
+          rm -f out/POST-VOID-iOS-v13-CONTROLLERFIX-ICON-BUTTONS-unsigned.ipa
 
           ditto \
             -c \
@@ -1501,18 +1593,18 @@ jobs:
             --sequesterRsrc \
             --keepParent \
             work/Payload \
-            out/POST-VOID-iOS-v12-FRAMEBUFFERFIX2-ICON-BUTTONS-unsigned.ipa
+            out/POST-VOID-iOS-v13-CONTROLLERFIX-ICON-BUTTONS-unsigned.ipa
 
-          test -s out/POST-VOID-iOS-v12-FRAMEBUFFERFIX2-ICON-BUTTONS-unsigned.ipa
+          test -s out/POST-VOID-iOS-v13-CONTROLLERFIX-ICON-BUTTONS-unsigned.ipa
 
           echo "IPA ready:"
-          ls -lh out/POST-VOID-iOS-v12-FRAMEBUFFERFIX2-ICON-BUTTONS-unsigned.ipa
+          ls -lh out/POST-VOID-iOS-v13-CONTROLLERFIX-ICON-BUTTONS-unsigned.ipa
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: POST-VOID-iOS-v12-FRAMEBUFFERFIX2-ICON-BUTTONS
-          path: out/POST-VOID-iOS-v12-FRAMEBUFFERFIX2-ICON-BUTTONS-unsigned.ipa
+          name: POST-VOID-iOS-v13-CONTROLLERFIX-ICON-BUTTONS
+          path: out/POST-VOID-iOS-v13-CONTROLLERFIX-ICON-BUTTONS-unsigned.ipa
           if-no-files-found: error
           compression-level: 0
 
