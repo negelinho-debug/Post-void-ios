@@ -494,31 +494,37 @@ jobs:
           #
           # Capture the framebuffer SDL has bound after creating its iOS GL
           # context and use that as Butterscotch's host framebuffer.
-          loop_hostfb_anchor = '''        if (gfx == MODERN_GL) {
-              renderer = GLRenderer_create();
-              hostFramebuffer = &((GLModernRenderer *)renderer)->hostFramebuffer;
-          }'''
+          # Use explicit \n strings here so YAML/Python indentation cannot
+          # change the exact C source we are searching for.
+          loop_hostfb_anchor = (
+              "        if (gfx == MODERN_GL) {\n"
+              "            renderer = GLRenderer_create();\n"
+              "            hostFramebuffer = &((GLModernRenderer *)renderer)->hostFramebuffer;\n"
+              "        }"
+          )
 
-          loop_hostfb_replacement = r'''        if (gfx == MODERN_GL) {
-              renderer = GLRenderer_create();
-              hostFramebuffer = &((GLModernRenderer *)renderer)->hostFramebuffer;
-
-          #ifdef PLATFORM_IOS
-              GLint iosDrawableFramebuffer = 0;
-              glGetIntegerv(
-                  GL_FRAMEBUFFER_BINDING,
-                  &iosDrawableFramebuffer
-              );
-
-              ((GLModernRenderer *)renderer)->hostFramebuffer =
-                  (GLuint)iosDrawableFramebuffer;
-
-              logInfo(
-                  "iOS: SDL drawable framebuffer = %u\n",
-                  (unsigned int)iosDrawableFramebuffer
-              );
-          #endif
-          }'''
+          loop_hostfb_replacement = (
+              "        if (gfx == MODERN_GL) {\n"
+              "            renderer = GLRenderer_create();\n"
+              "            hostFramebuffer = &((GLModernRenderer *)renderer)->hostFramebuffer;\n"
+              "\n"
+              "#ifdef PLATFORM_IOS\n"
+              "            GLint iosDrawableFramebuffer = 0;\n"
+              "            glGetIntegerv(\n"
+              "                GL_FRAMEBUFFER_BINDING,\n"
+              "                &iosDrawableFramebuffer\n"
+              "            );\n"
+              "\n"
+              "            ((GLModernRenderer *)renderer)->hostFramebuffer =\n"
+              "                (GLuint)iosDrawableFramebuffer;\n"
+              "\n"
+              "            logInfo(\n"
+              "                \"iOS: SDL drawable framebuffer = %u\\n\",\n"
+              "                (unsigned int)iosDrawableFramebuffer\n"
+              "            );\n"
+              "#endif\n"
+              "        }"
+          )
 
           replace(
               'src/loop.c',
@@ -1487,7 +1493,7 @@ jobs:
 
           cp -R "$APP" work/Payload/PostVoid.app
 
-          rm -f out/POST-VOID-iOS-v11-FRAMEBUFFERFIX-ICON-BUTTONS-unsigned.ipa
+          rm -f out/POST-VOID-iOS-v12-FRAMEBUFFERFIX2-ICON-BUTTONS-unsigned.ipa
 
           ditto \
             -c \
@@ -1495,18 +1501,18 @@ jobs:
             --sequesterRsrc \
             --keepParent \
             work/Payload \
-            out/POST-VOID-iOS-v11-FRAMEBUFFERFIX-ICON-BUTTONS-unsigned.ipa
+            out/POST-VOID-iOS-v12-FRAMEBUFFERFIX2-ICON-BUTTONS-unsigned.ipa
 
-          test -s out/POST-VOID-iOS-v11-FRAMEBUFFERFIX-ICON-BUTTONS-unsigned.ipa
+          test -s out/POST-VOID-iOS-v12-FRAMEBUFFERFIX2-ICON-BUTTONS-unsigned.ipa
 
           echo "IPA ready:"
-          ls -lh out/POST-VOID-iOS-v11-FRAMEBUFFERFIX-ICON-BUTTONS-unsigned.ipa
+          ls -lh out/POST-VOID-iOS-v12-FRAMEBUFFERFIX2-ICON-BUTTONS-unsigned.ipa
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: POST-VOID-iOS-v11-FRAMEBUFFERFIX-ICON-BUTTONS
-          path: out/POST-VOID-iOS-v11-FRAMEBUFFERFIX-ICON-BUTTONS-unsigned.ipa
+          name: POST-VOID-iOS-v12-FRAMEBUFFERFIX2-ICON-BUTTONS
+          path: out/POST-VOID-iOS-v12-FRAMEBUFFERFIX2-ICON-BUTTONS-unsigned.ipa
           if-no-files-found: error
           compression-level: 0
 
