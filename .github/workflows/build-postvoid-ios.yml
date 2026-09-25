@@ -560,7 +560,7 @@ jobs:
                   }
                   else if (
                       runner->currentRoomIndex == 2 &&
-                      iosBootRoomFrames > 240
+                      iosBootRoomFrames > 30
                   ) {
                       logWarn(
                           "iOS boot fallback: epilepsy screen stuck, advancing to menu room 4\n"
@@ -952,7 +952,7 @@ jobs:
               snprintf(
                   savePath,
                   sizeof(savePath),
-                  "%s/Documents/PostVoid",
+                  "%s/Documents/PostVoidV16",
                   home ? home : "."
               );
 
@@ -991,7 +991,13 @@ jobs:
 
               args.speedMultiplier = 1.0;
               args.fastForwardSpeed = 0.0;
-              args.osType = OS_ANDROID;
+              /*
+               * POST VOID's working Android port explicitly spoofs
+               * os_type = os_windows. The game's input/bootstrap code
+               * branches on this value, so reporting Android leaves it
+               * in the controller-disconnected path.
+               */
+              args.osType = OS_WINDOWS;
               args.windowWidth = 1280;
               args.windowHeight = 720;
               args.widescreenAspect = 16.0f / 9.0f;
@@ -1767,7 +1773,7 @@ jobs:
 
           cp -R "$APP" work/Payload/PostVoid.app
 
-          rm -f out/POST-VOID-iOS-v15-OUTER-ASSETS-CONTROLLERFIX-unsigned.ipa
+          rm -f out/POST-VOID-iOS-v16-WINDOWS-INPUTFIX-unsigned.ipa
 
           ditto \
             -c \
@@ -1775,18 +1781,18 @@ jobs:
             --sequesterRsrc \
             --keepParent \
             work/Payload \
-            out/POST-VOID-iOS-v15-OUTER-ASSETS-CONTROLLERFIX-unsigned.ipa
+            out/POST-VOID-iOS-v16-WINDOWS-INPUTFIX-unsigned.ipa
 
-          test -s out/POST-VOID-iOS-v15-OUTER-ASSETS-CONTROLLERFIX-unsigned.ipa
+          test -s out/POST-VOID-iOS-v16-WINDOWS-INPUTFIX-unsigned.ipa
 
           echo "IPA ready:"
-          ls -lh out/POST-VOID-iOS-v15-OUTER-ASSETS-CONTROLLERFIX-unsigned.ipa
+          ls -lh out/POST-VOID-iOS-v16-WINDOWS-INPUTFIX-unsigned.ipa
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: POST-VOID-iOS-v15-OUTER-ASSETS-CONTROLLERFIX
-          path: out/POST-VOID-iOS-v15-OUTER-ASSETS-CONTROLLERFIX-unsigned.ipa
+          name: POST-VOID-iOS-v16-WINDOWS-INPUTFIX
+          path: out/POST-VOID-iOS-v16-WINDOWS-INPUTFIX-unsigned.ipa
           if-no-files-found: error
           compression-level: 0
 
