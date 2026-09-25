@@ -104,11 +104,7 @@ jobs:
           rm -rf work/apk work/game_data work/game
           rm -f work/data0.zip work/game_data.apk
 
-          # Extract ONLY assets/data0 directly from the APK.
-          # The APK contains duplicate resource paths, so extracting the whole
-          # archive with unzip can stop on an interactive overwrite prompt.
           unzip -p "$APK" assets/data0 > work/data0.zip
-
           test -s work/data0.zip
 
           echo "POST VOID data0 extracted:"
@@ -145,26 +141,19 @@ jobs:
           print('game.droid header:', data)
 
           if data != b'FORM':
-              raise SystemExit('ERROR: game.droid is not a valid GameMaker data package')
+              raise SystemExit(
+                  'ERROR: game.droid is not a valid GameMaker data package'
+              )
           PY
 
           echo "Embedded full game data found:"
           du -sh work/game
           ls -lh work/game/game.droid
-          find work/game -maxdepth 2 -type f -print
 
       - name: Install original Android companion assets
         shell: bash
         run: |
           set -euo pipefail
-
-          # IMPORTANT:
-          # The full Android port keeps localization/options/controller DB
-          # in the OUTER APK assets, not only inside files/game_data.apk.
-          # Using only the inner game_data.apk is why iOS showed:
-          #   (Unknown key: 'ControllerDisconnected')
-          #
-          # Copy the exact outer assets into the iOS game bundle source.
 
           for name in \
             localization.json \
@@ -173,7 +162,10 @@ jobs:
             gamecontrollerdb.txt
           do
             if unzip -l "$APK" "assets/$name" >/dev/null 2>&1; then
-              unzip -p "$APK" "assets/$name" > "work/game/$name"
+              unzip -p "$APK" \
+                "assets/$name" \
+                > "work/game/$name"
+
               test -s "work/game/$name"
               echo "Installed outer APK asset: $name"
             else
@@ -186,21 +178,18 @@ jobs:
 
           if unzip -l "$APK" 'assets/fonts/*' \
             | grep -q 'assets/fonts/'; then
-            unzip -oq "$APK" 'assets/fonts/*' -d work/outer_assets
+
+            unzip -oq "$APK" \
+              'assets/fonts/*' \
+              -d work/outer_assets
 
             if [ -d work/outer_assets/assets/fonts ]; then
               rm -rf work/game/fonts
-              cp -R work/outer_assets/assets/fonts work/game/fonts
-              echo "Installed outer APK fonts"
+              cp -R \
+                work/outer_assets/assets/fonts \
+                work/game/fonts
             fi
           fi
-
-          echo "Companion assets now in work/game:"
-          ls -lh \
-            work/game/localization.json \
-            work/game/options.ini \
-            work/game/gamecontrollerdb.txt \
-            2>/dev/null || true
 
       - name: Patch POST VOID localization for iOS
         shell: bash
@@ -218,36 +207,42 @@ jobs:
 
           if not files[0].exists():
               raise SystemExit(
-                  "ERROR: localization.json is still missing after outer APK extraction"
+                  "ERROR: localization.json missing"
               )
 
           defaults = {
-              "ControllerDisconnected": "CONTROLLER DISCONNECTED",
-              "PressToContinue": "press {Select} to continue",
+              "ControllerDisconnected":
+                  "CONTROLLER DISCONNECTED",
+              "PressToContinue":
+                  "press {Select} to continue",
           }
 
           for path in files:
               if not path.exists():
-                  print(f"Skipping missing {path}")
                   continue
 
-              data = json.loads(path.read_text(encoding="utf-8-sig"))
-              changed = 0
+              data = json.loads(
+                  path.read_text(
+                      encoding="utf-8-sig"
+                  )
+              )
 
               for language, table in data.items():
                   if not isinstance(table, dict):
                       continue
+
                   for key, value in defaults.items():
                       if key not in table:
                           table[key] = value
-                          changed += 1
 
               path.write_text(
-                  json.dumps(data, ensure_ascii=False, indent=2),
+                  json.dumps(
+                      data,
+                      ensure_ascii=False,
+                      indent=2
+                  ),
                   encoding="utf-8"
               )
-
-              print(f"{path}: added {changed} missing localization entries")
           PY
 
       - name: Extract original POST VOID icon and buttons
@@ -257,11 +252,20 @@ jobs:
 
           mkdir -p work/ui
 
-          unzip -p "$APK" 'res/o-.png' > work/ui/IconSource.png
-          unzip -p "$APK" 'res/2_.png' > work/ui/PV_pause.png
-          unzip -p "$APK" 'res/t3.png' > work/ui/PV_fire.png
-          unzip -p "$APK" 'res/UF.png' > work/ui/PV_jump.png
-          unzip -p "$APK" 'res/5J.png' > work/ui/PV_extra.png
+          unzip -p "$APK" 'res/o-.png' \
+            > work/ui/IconSource.png
+
+          unzip -p "$APK" 'res/2_.png' \
+            > work/ui/PV_pause.png
+
+          unzip -p "$APK" 'res/t3.png' \
+            > work/ui/PV_fire.png
+
+          unzip -p "$APK" 'res/UF.png' \
+            > work/ui/PV_jump.png
+
+          unzip -p "$APK" 'res/5J.png' \
+            > work/ui/PV_extra.png
 
           test -s work/ui/IconSource.png
           test -s work/ui/PV_pause.png
@@ -269,12 +273,15 @@ jobs:
           test -s work/ui/PV_jump.png
           test -s work/ui/PV_extra.png
 
-          sips -z 180 180 work/ui/IconSource.png             --out work/ui/Icon-60@3x.png >/dev/null
+          sips -z 180 180 \
+            work/ui/IconSource.png \
+            --out work/ui/Icon-60@3x.png \
+            >/dev/null
 
-          sips -z 120 120 work/ui/IconSource.png             --out work/ui/Icon-60@2x.png >/dev/null
-
-          echo "Original icon/buttons extracted:"
-          ls -lh work/ui
+          sips -z 120 120 \
+            work/ui/IconSource.png \
+            --out work/ui/Icon-60@2x.png \
+            >/dev/null
 
       - name: Get Butterscotch GameMaker runner
         shell: bash
@@ -288,12 +295,16 @@ jobs:
             work/Butterscotch
 
           git -C work/Butterscotch \
-            checkout d05526846e75449295ed2596bd86e9db0108408a
+            checkout \
+            d05526846e75449295ed2596bd86e9db0108408a
 
           git -C work/Butterscotch \
-            submodule update --init --recursive
+            submodule update \
+            --init \
+            --recursive
 
-          rm -rf work/Butterscotch/vendor/SDL2
+          rm -rf \
+            work/Butterscotch/vendor/SDL2
 
           git clone \
             --depth 1 \
@@ -310,81 +321,89 @@ jobs:
           from pathlib import Path
           import textwrap
 
-          root = Path('work/Butterscotch')
+          root = Path(
+              "work/Butterscotch"
+          )
 
-          def replace(path, old, new, count=1):
+          def replace(
+              path,
+              old,
+              new,
+              count=1
+          ):
               p = root / path
               s = p.read_text()
+
               if old not in s:
-                  raise SystemExit(f'Patch anchor missing in {path}: {old[:100]!r}')
-              p.write_text(s.replace(old, new, count))
+                  raise SystemExit(
+                      f"Patch anchor missing in {path}: "
+                      f"{old[:100]!r}"
+                  )
+
+              p.write_text(
+                  s.replace(
+                      old,
+                      new,
+                      count
+                  )
+              )
 
           replace(
-              'CMakeLists.txt',
-              'project(butterscotch C)',
+              "CMakeLists.txt",
+              "project(butterscotch C)",
               '''if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
           project(butterscotch C OBJC)
           else()
           project(butterscotch C)
-          endif()''',
+          endif()'''
           )
 
-          # ----------------------------------------------------------
-          # 1. Tell the OpenGL renderer to use iOS OpenGL ES headers.
-          # ----------------------------------------------------------
           for rel in [
-              'src/gl_common/gl_common.h',
-              'src/gl/gl_renderer.h',
-              'src/gl/gl_renderer.c',
+              "src/gl_common/gl_common.h",
+              "src/gl/gl_renderer.h",
+              "src/gl/gl_renderer.c",
           ]:
               replace(
                   rel,
                   '#if defined(__EMSCRIPTEN__) || defined(__ANDROID__) || defined(__SWITCH__)\n#include <GLES3/gl3.h>',
-                  '#if defined(PLATFORM_IOS)\n#include <OpenGLES/ES3/gl.h>\n#elif defined(__EMSCRIPTEN__) || defined(__ANDROID__) || defined(__SWITCH__)\n#include <GLES3/gl3.h>',
+                  '#if defined(PLATFORM_IOS)\n#include <OpenGLES/ES3/gl.h>\n#elif defined(__EMSCRIPTEN__) || defined(__ANDROID__) || defined(__SWITCH__)\n#include <GLES3/gl3.h>'
               )
 
           replace(
-              'src/gl/gl_renderer.c',
+              "src/gl/gl_renderer.c",
               '#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !defined(__VITA__) && !defined(__SWITCH__)',
               '#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !defined(__VITA__) && !defined(__SWITCH__) && !defined(PLATFORM_IOS)',
-              count=2,
+              count=2
           )
 
           replace(
-              'src/loop.c',
+              "src/loop.c",
               '!defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !defined(PLATFORM_PS3) && !defined(PLATFORM_VITA) && !defined(__SWITCH__)',
-              '!defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !defined(PLATFORM_IOS) && !defined(PLATFORM_PS3) && !defined(PLATFORM_VITA) && !defined(__SWITCH__)',
+              '!defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !defined(PLATFORM_IOS) && !defined(PLATFORM_PS3) && !defined(PLATFORM_VITA) && !defined(__SWITCH__)'
           )
 
           replace(
-              'src/gl_common/gl_wrappers.h',
+              "src/gl_common/gl_wrappers.h",
               '#if !defined(_BS_GL_WRAPPERS_H_) && !defined(__EMSCRIPTEN__) && !defined(PLATFORM_PS3) && !defined(PLATFORM_VITA) && !defined(__ANDROID__) && !defined(__SWITCH__)',
-              '#if !defined(_BS_GL_WRAPPERS_H_) && !defined(__EMSCRIPTEN__) && !defined(PLATFORM_PS3) && !defined(PLATFORM_VITA) && !defined(__ANDROID__) && !defined(__SWITCH__) && !defined(PLATFORM_IOS)',
+              '#if !defined(_BS_GL_WRAPPERS_H_) && !defined(__EMSCRIPTEN__) && !defined(PLATFORM_PS3) && !defined(PLATFORM_VITA) && !defined(__ANDROID__) && !defined(__SWITCH__) && !defined(PLATFORM_IOS)'
           )
 
           replace(
-              'src/gl_common/gl_common.c',
+              "src/gl_common/gl_common.c",
               '#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !defined(PLATFORM_VITA) && !defined(__SWITCH__) && !defined(PLATFORM_PS3)',
-              '#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !defined(PLATFORM_VITA) && !defined(__SWITCH__) && !defined(PLATFORM_PS3) && !defined(PLATFORM_IOS)',
+              '#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !defined(PLATFORM_VITA) && !defined(__SWITCH__) && !defined(PLATFORM_PS3) && !defined(PLATFORM_IOS)'
           )
 
-
-          # POST VOID / GameMaker uses vertex_format_add_texcoord.
-          # Butterscotch currently registers the implementation under
-          # the misspelled name vertex_format_add_textcoord.
           replace(
-              'src/vm_builtins.c',
+              "src/vm_builtins.c",
               'VM_registerBuiltin(ctx, "vertex_format_add_textcoord", builtin_vertex_format_add_textcoord);',
               '''VM_registerBuiltin(ctx, "vertex_format_add_textcoord", builtin_vertex_format_add_textcoord);
-              VM_registerBuiltin(ctx, "vertex_format_add_texcoord", builtin_vertex_format_add_textcoord);''',
+              VM_registerBuiltin(ctx, "vertex_format_add_texcoord", builtin_vertex_format_add_textcoord);'''
           )
 
-          # GameMaker 2023 calls this during Localization setup.
-          # It only toggles font antialiasing state; returning undefined is
-          # enough for POST VOID to continue on our renderer.
           replace(
-              'src/vm_builtins.c',
-              '// ===[ STUB LOGGING ]===',
+              "src/vm_builtins.c",
+              "// ===[ STUB LOGGING ]===",
               '''static RValue builtin_font_add_enable_aa(
                   MAYBE_UNUSED VMContext* ctx,
                   MAYBE_UNUSED RValue* args,
@@ -393,19 +412,16 @@ jobs:
                   return RValue_makeUndefined();
               }
 
-              // ===[ STUB LOGGING ]===''',
+              // ===[ STUB LOGGING ]==='''
           )
 
           replace(
-              'src/vm_builtins.c',
+              "src/vm_builtins.c",
               'VM_registerBuiltin(ctx, "font_add_sprite", builtin_font_add_sprite);',
               '''VM_registerBuiltin(ctx, "font_add_enable_aa", builtin_font_add_enable_aa);
-              VM_registerBuiltin(ctx, "font_add_sprite", builtin_font_add_sprite);''',
+              VM_registerBuiltin(ctx, "font_add_sprite", builtin_font_add_sprite);'''
           )
 
-          # iOS OpenGL ES accepts fwidth() in GLSL ES 1.00 only when the
-          # standard-derivatives extension is enabled. POST VOID's internal
-          # __yy_sdf_shader is GLSL ES 1.00 and uses fwidth().
           gl_shader_anchor = '''        char* patchedVertexSource = nullptr;
                   char* patchedFragmentSource = nullptr;
           '''
@@ -417,20 +433,37 @@ jobs:
                   if (
                       modernGl->isGLES &&
                       fragmentShaderSource != nullptr &&
-                      strncmp(fragmentShaderSource, "#version 100\\n", 13) == 0 &&
-                      strstr(fragmentShaderSource, "fwidth") != nullptr
+                      strncmp(
+                          fragmentShaderSource,
+                          "#version 100\\\\n",
+                          13
+                      ) == 0 &&
+                      strstr(
+                          fragmentShaderSource,
+                          "fwidth"
+                      ) != nullptr
                   ) {
-                      const char* versionLine = "#version 100\\n";
+                      const char* versionLine =
+                          "#version 100\\\\n";
+
                       const char* extensionLine =
-                          "#extension GL_OES_standard_derivatives : enable\\n";
+                          "#extension GL_OES_standard_derivatives : enable\\\\n";
 
-                      size_t srcLen = strlen(fragmentShaderSource);
-                      size_t versionLen = strlen(versionLine);
-                      size_t extensionLen = strlen(extensionLine);
+                      size_t srcLen =
+                          strlen(fragmentShaderSource);
 
-                      patchedFragmentSource = (char*)safeMalloc(
-                          srcLen + extensionLen + 1
-                      );
+                      size_t versionLen =
+                          strlen(versionLine);
+
+                      size_t extensionLen =
+                          strlen(extensionLine);
+
+                      patchedFragmentSource =
+                          (char*)safeMalloc(
+                              srcLen +
+                              extensionLen +
+                              1
+                          );
 
                       memcpy(
                           patchedFragmentSource,
@@ -439,32 +472,35 @@ jobs:
                       );
 
                       memcpy(
-                          patchedFragmentSource + versionLen,
+                          patchedFragmentSource +
+                          versionLen,
                           extensionLine,
                           extensionLen
                       );
 
                       memcpy(
-                          patchedFragmentSource + versionLen + extensionLen,
-                          fragmentShaderSource + versionLen,
-                          srcLen - versionLen + 1
+                          patchedFragmentSource +
+                          versionLen +
+                          extensionLen,
+                          fragmentShaderSource +
+                          versionLen,
+                          srcLen -
+                          versionLen +
+                          1
                       );
 
-                      fragmentShaderSource = patchedFragmentSource;
+                      fragmentShaderSource =
+                          patchedFragmentSource;
                   }
           #endif
           '''
 
           replace(
-              'src/gl/gl_renderer.c',
+              "src/gl/gl_renderer.c",
               gl_shader_anchor,
-              gl_shader_replacement,
+              gl_shader_replacement
           )
 
-          # The previous extension-based fix is not enough on Apple's GLSL
-          # compiler for this exact GameMaker SDF shader. Replace ONLY the
-          # internal __yy_sdf_shader fragment source with a simple compatible
-          # shader. POST VOID's own gameplay shaders are left untouched.
           sdf_compile_anchor = '''        compileProgram(
                       gmlShader,
                       shdr->name,
@@ -477,7 +513,10 @@ jobs:
           sdf_compile_replacement = r'''#ifdef PLATFORM_IOS
                   if (
                       modernGl->isGLES &&
-                      strcmp(shdr->name, "__yy_sdf_shader") == 0
+                      strcmp(
+                          shdr->name,
+                          "__yy_sdf_shader"
+                      ) == 0
                   ) {
                       fragmentShaderSource =
                           "#version 100\n"
@@ -504,30 +543,32 @@ jobs:
                   );'''
 
           replace(
-              'src/gl/gl_renderer.c',
+              "src/gl/gl_renderer.c",
               sdf_compile_anchor,
-              sdf_compile_replacement,
+              sdf_compile_replacement
           )
 
-          # POST VOID's Android port documents the startup order as:
-          # room_preload (0) -> room_splash_screen (1) ->
-          # room_epilepsy (2) -> room_menu (4).
-          #
-          # On the iOS Butterscotch runner the game reaches room_preload but
-          # never leaves it. Keep normal GML room changes, but add a timed
-          # fallback only when those boot rooms are still stuck.
           boot_tail_anchor = '''    runner->frameCount++;
           }
 
           // ===[ Surface Stack ]==='''
 
           boot_tail_replacement = r'''#ifdef PLATFORM_IOS
-              static int32_t iosBootLastRoom = -9999;
-              static int32_t iosBootRoomFrames = 0;
+              static int32_t iosBootLastRoom =
+                  -9999;
 
-              if (runner->currentRoomIndex != iosBootLastRoom) {
-                  iosBootLastRoom = runner->currentRoomIndex;
+              static int32_t iosBootRoomFrames =
+                  0;
+
+              if (
+                  runner->currentRoomIndex !=
+                  iosBootLastRoom
+              ) {
+                  iosBootLastRoom =
+                      runner->currentRoomIndex;
+
                   iosBootRoomFrames = 0;
+
                   logInfo(
                       "iOS boot: entered room %d (%s)\n",
                       runner->currentRoomIndex,
@@ -545,8 +586,9 @@ jobs:
                       iosBootRoomFrames > 10
                   ) {
                       logWarn(
-                          "iOS boot fallback: room_preload stuck, advancing to room 1\n"
+                          "iOS boot fallback: preload -> splash\n"
                       );
+
                       runner->pendingRoom = 1;
                   }
                   else if (
@@ -554,17 +596,19 @@ jobs:
                       iosBootRoomFrames > 240
                   ) {
                       logWarn(
-                          "iOS boot fallback: splash stuck, advancing to room 2\n"
+                          "iOS boot fallback: splash -> epilepsy\n"
                       );
+
                       runner->pendingRoom = 2;
                   }
                   else if (
                       runner->currentRoomIndex == 2 &&
-                      iosBootRoomFrames > 30
+                      iosBootRoomFrames > 3600
                   ) {
                       logWarn(
-                          "iOS boot fallback: epilepsy screen stuck, advancing to menu room 4\n"
+                          "iOS boot fallback: epilepsy -> menu\n"
                       );
+
                       runner->pendingRoom = 4;
                   }
               }
@@ -576,68 +620,46 @@ jobs:
           // ===[ Surface Stack ]==='''
 
           replace(
-              'src/runner.c',
+              "src/runner.c",
               boot_tail_anchor,
-              boot_tail_replacement,
+              boot_tail_replacement
           )
 
-
-          # IMPORTANT iOS fix:
-          # SDL/UIKit does NOT render to framebuffer 0. Its CAEAGLLayer owns
-          # a real non-zero framebuffer. Butterscotch assumes desktop GL's
-          # host framebuffer is 0, so the game renders correctly into the
-          # application surface and then blits it into framebuffer 0, which
-          # is not the visible iPhone drawable -> black screen.
-          #
-          # Capture the framebuffer SDL has bound after creating its iOS GL
-          # context and use that as Butterscotch's host framebuffer.
-          # Use explicit \n strings here so YAML/Python indentation cannot
-          # change the exact C source we are searching for.
           loop_hostfb_anchor = (
-              "        if (gfx == MODERN_GL) {\n"
-              "            renderer = GLRenderer_create();\n"
-              "            hostFramebuffer = &((GLModernRenderer *)renderer)->hostFramebuffer;\n"
+              "        if (gfx == MODERN_GL) {\\n"
+              "            renderer = GLRenderer_create();\\n"
+              "            hostFramebuffer = &((GLModernRenderer *)renderer)->hostFramebuffer;\\n"
               "        }"
           )
 
           loop_hostfb_replacement = (
-              "        if (gfx == MODERN_GL) {\n"
-              "            renderer = GLRenderer_create();\n"
-              "            hostFramebuffer = &((GLModernRenderer *)renderer)->hostFramebuffer;\n"
-              "\n"
-              "#ifdef PLATFORM_IOS\n"
-              "            GLint iosDrawableFramebuffer = 0;\n"
-              "            glGetIntegerv(\n"
-              "                GL_FRAMEBUFFER_BINDING,\n"
-              "                &iosDrawableFramebuffer\n"
-              "            );\n"
-              "\n"
-              "            ((GLModernRenderer *)renderer)->hostFramebuffer =\n"
-              "                (GLuint)iosDrawableFramebuffer;\n"
-              "\n"
-              "            logInfo(\n"
-              "                \"iOS: SDL drawable framebuffer = %u\\n\",\n"
-              "                (unsigned int)iosDrawableFramebuffer\n"
-              "            );\n"
-              "#endif\n"
+              "        if (gfx == MODERN_GL) {\\n"
+              "            renderer = GLRenderer_create();\\n"
+              "            hostFramebuffer = &((GLModernRenderer *)renderer)->hostFramebuffer;\\n"
+              "\\n"
+              "#ifdef PLATFORM_IOS\\n"
+              "            GLint iosDrawableFramebuffer = 0;\\n"
+              "            glGetIntegerv(\\n"
+              "                GL_FRAMEBUFFER_BINDING,\\n"
+              "                &iosDrawableFramebuffer\\n"
+              "            );\\n"
+              "\\n"
+              "            ((GLModernRenderer *)renderer)->hostFramebuffer =\\n"
+              "                (GLuint)iosDrawableFramebuffer;\\n"
+              "\\n"
+              "            logInfo(\\n"
+              "                \\"iOS: SDL drawable framebuffer = %u\\\\n\\",\\n"
+              "                (unsigned int)iosDrawableFramebuffer\\n"
+              "            );\\n"
+              "#endif\\n"
               "        }"
           )
 
           replace(
-              'src/loop.c',
+              "src/loop.c",
               loop_hostfb_anchor,
-              loop_hostfb_replacement,
+              loop_hostfb_replacement
           )
-
-
-          # ----------------------------------------------------------
-          # POST VOID iOS v14:
-          # 1) Always read localization from the fresh app bundle on iOS.
-          #    Butterscotch normally prefers Documents/PostVoid first, so an
-          #    old localization.json from v12/v13 can survive app reinstalls.
-          # 2) Force slot 0 to look like the XInput controller POST VOID's
-          #    mobile port expects, directly at the GameMaker builtin layer.
-          # ----------------------------------------------------------
 
           ofs_anchor = '''static char* resolveForRead(OverlayFileSystem* ofs, const char* relativePath) {
               char* normalized = normalizePath(relativePath);
@@ -650,15 +672,22 @@ jobs:
               if (isAbsolute(normalized)) return normalized;
 
           #ifdef PLATFORM_IOS
-              /*
-               * Do not allow a stale copy in Documents/PostVoid to override
-               * the localization bundled with the current IPA.
-               */
               if (
-                  strcmp(normalized, "localization.json") == 0 ||
-                  strcmp(normalized, "localization_ar_test.json") == 0
+                  strcmp(
+                      normalized,
+                      "localization.json"
+                  ) == 0 ||
+                  strcmp(
+                      normalized,
+                      "localization_ar_test.json"
+                  ) == 0
               ) {
-                  char* bundleFull = joinPath(ofs->bundlePath, normalized);
+                  char* bundleFull =
+                      joinPath(
+                          ofs->bundlePath,
+                          normalized
+                      );
+
                   free(normalized);
                   return bundleFull;
               }
@@ -667,9 +696,9 @@ jobs:
               // Check if the path is already resolved'''
 
           replace(
-              'src/overlay_file_system.c',
+              "src/overlay_file_system.c",
               ofs_anchor,
-              ofs_replacement,
+              ofs_replacement
           )
 
           gp_count_anchor = '''static RValue builtin_gamepad_get_device_count(VMContext* ctx, RValue* args, int32_t argCount) {
@@ -680,23 +709,31 @@ jobs:
 
           gp_count_replacement = '''static RValue builtin_gamepad_get_device_count(VMContext* ctx, RValue* args, int32_t argCount) {
               Runner* runner = ctx->runner;
-              if (runner == NULL || runner->gamepads == NULL) return RValue_makeReal(0.0);
+
+              if (
+                  runner == NULL ||
+                  runner->gamepads == NULL
+              )
+                  return RValue_makeReal(0.0);
 
           #ifdef PLATFORM_IOS
-              /*
-               * Match the Android POST VOID hook: report the full GameMaker
-               * gamepad slot range while slot 0 is our synthetic touch pad.
-               */
-              return RValue_makeReal((GMLReal) MAX_GAMEPADS);
+              return RValue_makeReal(
+                  (GMLReal)MAX_GAMEPADS
+              );
           #else
-              return RValue_makeReal((GMLReal) RunnerGamepad_getDeviceCount(runner->gamepads));
+              return RValue_makeReal(
+                  (GMLReal)
+                  RunnerGamepad_getDeviceCount(
+                      runner->gamepads
+                  )
+              );
           #endif
           }'''
 
           replace(
-              'src/vm_builtins.c',
+              "src/vm_builtins.c",
               gp_count_anchor,
-              gp_count_replacement,
+              gp_count_replacement
           )
 
           gp_connected_anchor = '''static RValue builtin_gamepad_is_connected(VMContext* ctx, RValue* args, int32_t argCount) {
@@ -708,22 +745,33 @@ jobs:
 
           gp_connected_replacement = '''static RValue builtin_gamepad_is_connected(VMContext* ctx, RValue* args, int32_t argCount) {
               Runner* runner = ctx->runner;
-              if (runner == NULL || runner->gamepads == NULL) return RValue_makeBool(false);
-              int32_t device = RValue_toInt32(args[0]);
+
+              if (
+                  runner == NULL ||
+                  runner->gamepads == NULL
+              )
+                  return RValue_makeBool(false);
+
+              int32_t device =
+                  RValue_toInt32(args[0]);
 
           #ifdef PLATFORM_IOS
-              if (device == 0) {
+              if (device == 0)
                   return RValue_makeBool(true);
-              }
           #endif
 
-              return RValue_makeBool(RunnerGamepad_isConnected(runner->gamepads, device));
+              return RValue_makeBool(
+                  RunnerGamepad_isConnected(
+                      runner->gamepads,
+                      device
+                  )
+              );
           }'''
 
           replace(
-              'src/vm_builtins.c',
+              "src/vm_builtins.c",
               gp_connected_anchor,
-              gp_connected_replacement,
+              gp_connected_replacement
           )
 
           gp_desc_anchor = '''static RValue builtin_gamepad_get_description(VMContext* ctx, RValue* args, int32_t argCount) {
@@ -736,32 +784,47 @@ jobs:
 
           gp_desc_replacement = '''static RValue builtin_gamepad_get_description(VMContext* ctx, RValue* args, int32_t argCount) {
               Runner* runner = ctx->runner;
-              if (runner == NULL || runner->gamepads == NULL) return RValue_makeOwnedString(safeStrdup(""));
-              int32_t device = RValue_toInt32(args[0]);
+
+              if (
+                  runner == NULL ||
+                  runner->gamepads == NULL
+              )
+                  return RValue_makeOwnedString(
+                      safeStrdup("")
+                  );
+
+              int32_t device =
+                  RValue_toInt32(args[0]);
 
           #ifdef PLATFORM_IOS
               if (device == 0) {
                   return RValue_makeOwnedString(
-                      safeStrdup("XInput STANDARD GAMEPAD")
+                      safeStrdup(
+                          "XInput STANDARD GAMEPAD"
+                      )
                   );
               }
           #endif
 
-              const char* desc = RunnerGamepad_getDescription(runner->gamepads, device);
-              return RValue_makeOwnedString(safeStrdup(desc));
+              const char* desc =
+                  RunnerGamepad_getDescription(
+                      runner->gamepads,
+                      device
+                  );
+
+              return RValue_makeOwnedString(
+                  safeStrdup(desc)
+              );
           }'''
 
           replace(
-              'src/vm_builtins.c',
+              "src/vm_builtins.c",
               gp_desc_anchor,
-              gp_desc_replacement,
+              gp_desc_replacement
           )
 
-          # ----------------------------------------------------------
-          # 2. Build SDL2 inside the same Xcode project on iOS.
-          # ----------------------------------------------------------
           replace(
-              'CMakeLists.txt',
+              "CMakeLists.txt",
               '''    elseif(BACKEND STREQUAL "sdl2")
                   add_compile_definitions(USE_SDL2)
 
@@ -780,33 +843,44 @@ jobs:
                       set(SDL_TESTS OFF CACHE BOOL "" FORCE)
                       set(SDL2_DISABLE_INSTALL ON CACHE BOOL "" FORCE)
 
-                      add_subdirectory(vendor/SDL2 EXCLUDE_FROM_ALL)
+                      add_subdirectory(
+                          vendor/SDL2
+                          EXCLUDE_FROM_ALL
+                      )
 
-                      set(BACKEND_LIBRARIES
+                      set(
+                          BACKEND_LIBRARIES
                           SDL2::SDL2-static
                           SDL2::SDL2main
                       )
                   else()
                       find_package(PkgConfig REQUIRED)
                       pkg_check_modules(SDL2 REQUIRED sdl2)
-                      target_include_directories(butterscotch PRIVATE ${SDL2_INCLUDE_DIRS})
-                      target_link_directories(butterscotch PRIVATE ${SDL2_LIBRARY_DIRS})
-                      set(BACKEND_LIBRARIES ${SDL2_LIBRARIES})
-                  endif()''',
+                      target_include_directories(
+                          butterscotch
+                          PRIVATE
+                          ${SDL2_INCLUDE_DIRS}
+                      )
+                      target_link_directories(
+                          butterscotch
+                          PRIVATE
+                          ${SDL2_LIBRARY_DIRS}
+                      )
+                      set(
+                          BACKEND_LIBRARIES
+                          ${SDL2_LIBRARIES}
+                      )
+                  endif()'''
           )
 
-          # GLAD is for desktop OpenGL. iPhone uses GLES directly.
           replace(
-              'CMakeLists.txt',
+              "CMakeLists.txt",
               'if(NOT PLATFORM STREQUAL "vita" AND NOT PLATFORM STREQUAL "switch")\n        # GLAD',
-              'if(NOT PLATFORM STREQUAL "vita" AND NOT PLATFORM STREQUAL "switch" AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")\n        # GLAD',
+              'if(NOT PLATFORM STREQUAL "vita" AND NOT PLATFORM STREQUAL "switch" AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")\n        # GLAD'
           )
 
-          # ----------------------------------------------------------
-          # 3. Turn the executable into an iPhone .app bundle.
-          # ----------------------------------------------------------
           replace(
-              'CMakeLists.txt',
+              "CMakeLists.txt",
               'target_include_directories(butterscotch PRIVATE src/${PLATFORM})',
               '''target_include_directories(butterscotch PRIVATE src/${PLATFORM})
 
@@ -815,11 +889,11 @@ jobs:
                   butterscotch PRIVATE
                   PLATFORM_IOS
               )
+
               target_sources(
                   butterscotch PRIVATE
                   src/ios/ios_overlay.m
               )
-
 
               set_target_properties(
                   butterscotch PROPERTIES
@@ -854,12 +928,9 @@ jobs:
                   "-framework GameController"
                   "-framework CoreMotion"
               )
-          endif()''',
+          endif()'''
           )
 
-          # ----------------------------------------------------------
-          # 4. iOS main(): load bundled game.droid and save to Documents.
-          # ----------------------------------------------------------
           main_c = r'''
           #include <SDL2/SDL.h>
           #include <SDL2/SDL_main.h>
@@ -887,37 +958,78 @@ jobs:
                       break;
 
                   case LOG_TYPE_WARNING:
-                      fputs("Warning: ", out);
+                      fputs(
+                          "Warning: ",
+                          out
+                      );
                       break;
 
                   case LOG_TYPE_ERROR:
-                      fputs("Error: ", out);
+                      fputs(
+                          "Error: ",
+                          out
+                      );
                       break;
 
                   case LOG_TYPE_DEBUG:
-                      fputs("Debug: ", out);
+                      fputs(
+                          "Debug: ",
+                          out
+                      );
                       break;
               }
 
-              vfprintf(out, format, va);
+              vfprintf(
+                  out,
+                  format,
+                  va
+              );
+
               fflush(out);
           }
 
-          static void ensureDir(const char *path) {
-              if (path && path[0])
-                  mkdir(path, 0755);
+          static void ensureDir(
+              const char *path
+          ) {
+              if (
+                  path &&
+                  path[0]
+              )
+                  mkdir(
+                      path,
+                      0755
+                  );
           }
 
-          int main(int argc, char **argv) {
+          int main(
+              int argc,
+              char **argv
+          ) {
               (void)argc;
 
-              setbuf(stdout, NULL);
-              setbuf(stderr, NULL);
+              setbuf(
+                  stdout,
+                  NULL
+              );
 
-              SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");
-              SDL_SetHint(SDL_HINT_MOUSE_TOUCH_EVENTS, "0");
+              setbuf(
+                  stderr,
+                  NULL
+              );
 
-              char *base = SDL_GetBasePath();
+              SDL_SetHint(
+                  SDL_HINT_TOUCH_MOUSE_EVENTS,
+                  "0"
+              );
+
+              SDL_SetHint(
+                  SDL_HINT_MOUSE_TOUCH_EVENTS,
+                  "0"
+              );
+
+              char *base =
+                  SDL_GetBasePath();
+
               if (!base)
                   return 20;
 
@@ -926,7 +1038,10 @@ jobs:
                   return 21;
               }
 
-              char gamePath[PATH_MAX];
+              char gamePath[
+                  PATH_MAX
+              ];
+
               snprintf(
                   gamePath,
                   sizeof(gamePath),
@@ -934,11 +1049,20 @@ jobs:
                   base
               );
 
-              const char *home = getenv("HOME");
+              const char *home =
+                  getenv("HOME");
 
-              char docsPath[PATH_MAX];
-              char savePath[PATH_MAX];
-              char logPath[PATH_MAX];
+              char docsPath[
+                  PATH_MAX
+              ];
+
+              char savePath[
+                  PATH_MAX
+              ];
+
+              char logPath[
+                  PATH_MAX
+              ];
 
               snprintf(
                   docsPath,
@@ -947,16 +1071,20 @@ jobs:
                   home ? home : "."
               );
 
-              ensureDir(docsPath);
+              ensureDir(
+                  docsPath
+              );
 
               snprintf(
                   savePath,
                   sizeof(savePath),
-                  "%s/Documents/PostVoidV16",
+                  "%s/Documents/PostVoidV17",
                   home ? home : "."
               );
 
-              ensureDir(savePath);
+              ensureDir(
+                  savePath
+              );
 
               snprintf(
                   logPath,
@@ -965,92 +1093,167 @@ jobs:
                   savePath
               );
 
-              freopen(logPath, "a", stdout);
-              freopen(logPath, "a", stderr);
+              freopen(
+                  logPath,
+                  "a",
+                  stdout
+              );
 
-              fprintf(stderr, "=== POST VOID iOS ===\n");
-              fprintf(stderr, "base: %s\n", base);
-              fprintf(stderr, "game: %s\n", gamePath);
-              fprintf(stderr, "save: %s\n", savePath);
+              freopen(
+                  logPath,
+                  "a",
+                  stderr
+              );
 
-              if (access(gamePath, R_OK) != 0) {
-                  fprintf(stderr, "ERROR: game.droid is missing\n");
+              fprintf(
+                  stderr,
+                  "=== POST VOID iOS v17 ===\n"
+              );
+
+              fprintf(
+                  stderr,
+                  "base: %s\n",
+                  base
+              );
+
+              fprintf(
+                  stderr,
+                  "game: %s\n",
+                  gamePath
+              );
+
+              fprintf(
+                  stderr,
+                  "save: %s\n",
+                  savePath
+              );
+
+              if (
+                  access(
+                      gamePath,
+                      R_OK
+                  ) != 0
+              ) {
+                  fprintf(
+                      stderr,
+                      "ERROR: game.droid missing\n"
+                  );
+
                   SDL_free(base);
                   return 22;
               }
 
-              CommandLineArgs args = {0};
+              CommandLineArgs args = {
+                  0
+              };
 
-              args.dataWinPath = gamePath;
-              args.saveFolder = savePath;
-              args.exitAtFrame = -1;
+              args.dataWinPath =
+                  gamePath;
+
+              args.saveFolder =
+                  savePath;
+
+              args.exitAtFrame =
+                  -1;
 
           #ifdef ENABLE_VM_TRACING
-              args.traceBytecodeAfterFrame = 0;
+              args.traceBytecodeAfterFrame =
+                  0;
           #endif
 
-              args.speedMultiplier = 1.0;
-              args.fastForwardSpeed = 0.0;
-              /*
-               * POST VOID's working Android port explicitly spoofs
-               * os_type = os_windows. The game's input/bootstrap code
-               * branches on this value, so reporting Android leaves it
-               * in the controller-disconnected path.
-               */
-              args.osType = OS_WINDOWS;
-              args.windowWidth = 1280;
-              args.windowHeight = 720;
-              args.widescreenAspect = 16.0f / 9.0f;
-              args.profilerFramesBetween = 0;
-              /*
-               * POST VOID stores absolute pointers that can jump outside
-               * the currently loaded chunk. Per-chunk loading aborts on
-               * those seeks, so keep the whole 225 MB game.droid mapped
-               * in memory while parsing.
-               */
+              args.speedMultiplier =
+                  1.0;
+
+              args.fastForwardSpeed =
+                  0.0;
+
+              args.osType =
+                  OS_WINDOWS;
+
+              args.windowWidth =
+                  1280;
+
+              args.windowHeight =
+                  720;
+
+              args.widescreenAspect =
+                  16.0f / 9.0f;
+
+              args.profilerFramesBetween =
+                  0;
+
               args.loadType =
                   DATAWINLOADTYPE_LOAD_IN_MEMORY_AHEAD_OF_TIME;
 
-              args.lazyRooms = false;
-              args.lazyTextures = false;
-              args.lazyAudio = false;
-              args.renderer = MODERN_GL;
-              args.disableLogColours = true;
-              args.alwaysLogUnknownFunctions = true;
+              args.lazyRooms =
+                  false;
+
+              args.lazyTextures =
+                  false;
+
+              args.lazyAudio =
+                  false;
+
+              args.renderer =
+                  MODERN_GL;
+
+              args.disableLogColours =
+                  true;
+
+              args.alwaysLogUnknownFunctions =
+                  false;
 
           #ifdef ENABLE_VM_STUB_LOGS
-              args.alwaysLogStubbedFunctions = true;
+              args.alwaysLogStubbedFunctions =
+                  false;
           #endif
 
-              int ret = loop(args, argv[0]);
+              int ret =
+                  loop(
+                      args,
+                      argv[0]
+                  );
 
-              freeCommandLineArgs(&args);
+              freeCommandLineArgs(
+                  &args
+              );
 
-              fprintf(stderr, "runner exited: %d\n", ret);
+              fprintf(
+                  stderr,
+                  "runner exited: %d\n",
+                  ret
+              );
 
               SDL_free(base);
               return ret;
           }
           '''
 
-          (root / 'src/cli/main.c').write_text(
-              textwrap.dedent(main_c).lstrip()
+          (
+              root /
+              "src/cli/main.c"
+          ).write_text(
+              textwrap.dedent(
+                  main_c
+              ).lstrip()
           )
 
-          # ----------------------------------------------------------
-          # 5. Invisible touch gamepad:
-          #    left half = movement
-          #    right half = aim
-          #    bottom-right = shoot (RT)
-          #    button next to it = A/action
-          #    top-right = Start/pause
-          # ----------------------------------------------------------
-          p = root / 'src/backends/sdl2.c'
+          p = (
+              root /
+              "src/backends/sdl2.c"
+          )
+
           s = p.read_text()
 
-          init_fn_anchor = 'bool platformInit(int reqW, int reqH, const char *title, bool headless) {'
+          init_fn_anchor = (
+              "bool platformInit(int reqW, int reqH, "
+              "const char *title, bool headless) {"
+          )
+
           if init_fn_anchor not in s:
-              raise SystemExit('iOS overlay platformInit anchor missing')
+              raise SystemExit(
+                  "platformInit anchor missing"
+              )
 
           s = s.replace(
               init_fn_anchor,
@@ -1059,7 +1262,7 @@ jobs:
           #endif
 
           bool platformInit(int reqW, int reqH, const char *title, bool headless) {''',
-              1,
+              1
           )
 
           platform_return_anchor = '''#endif
@@ -1069,8 +1272,13 @@ jobs:
 
           void platformExit(void) {'''
 
-          if platform_return_anchor not in s:
-              raise SystemExit('iOS overlay return anchor missing')
+          if (
+              platform_return_anchor
+              not in s
+          ):
+              raise SystemExit(
+                  "platform return anchor missing"
+              )
 
           s = s.replace(
               platform_return_anchor,
@@ -1084,12 +1292,18 @@ jobs:
           }
 
           void platformExit(void) {''',
-              1,
+              1
           )
 
-          anchor = 'static SDL_GameController* openControllers[MAX_GAMEPADS];\n'
+          anchor = (
+              "static SDL_GameController* "
+              "openControllers[MAX_GAMEPADS];\n"
+          )
+
           if anchor not in s:
-              raise SystemExit('Touch patch anchor 1 missing')
+              raise SystemExit(
+                  "controller anchor missing"
+              )
 
           touch_state = r'''
 
@@ -1109,23 +1323,42 @@ jobs:
               SDL_FingerID id;
           } IOSTouchButton;
 
-          static IOSTouchStick iosLeft = {0};
-          static IOSTouchStick iosRight = {0};
+          static IOSTouchStick iosLeft = {
+              0
+          };
 
-          static IOSTouchButton iosFire = {0};
-          static IOSTouchButton iosAction = {0};
-          static IOSTouchButton iosExtra = {0};
-          static IOSTouchButton iosPause = {0};
+          static IOSTouchStick iosRight = {
+              0
+          };
 
-          /*
-           * POST VOID expects controller slot 0 to exist during room_preload,
-           * plus repeated "gamepad discovered" events during startup.
-           */
-          static int iosDiscoveryFrames = 0;
+          static IOSTouchButton iosFire = {
+              0
+          };
 
-          static float iosClamp(float value) {
-              if (value < -1.0f) return -1.0f;
-              if (value > 1.0f) return 1.0f;
+          static IOSTouchButton iosAction = {
+              0
+          };
+
+          static IOSTouchButton iosExtra = {
+              0
+          };
+
+          static IOSTouchButton iosPause = {
+              0
+          };
+
+          static int iosDiscoveryFrames =
+              0;
+
+          static float iosClamp(
+              float value
+          ) {
+              if (value < -1.0f)
+                  return -1.0f;
+
+              if (value > 1.0f)
+                  return 1.0f;
+
               return value;
           }
 
@@ -1149,20 +1382,29 @@ jobs:
               float x = f->x;
               float y = f->y;
 
-              if (x > 0.88f && y < 0.20f && !iosPause.active) {
+              if (
+                  x > 0.88f &&
+                  y < 0.20f &&
+                  !iosPause.active
+              ) {
                   iosPause.active = true;
                   iosPause.id = f->fingerId;
                   return;
               }
 
-              if (x > 0.82f && y > 0.62f && !iosFire.active) {
+              if (
+                  x > 0.82f &&
+                  y > 0.62f &&
+                  !iosFire.active
+              ) {
                   iosFire.active = true;
                   iosFire.id = f->fingerId;
                   return;
               }
 
               if (
-                  x > 0.68f && x <= 0.82f &&
+                  x > 0.68f &&
+                  x <= 0.82f &&
                   y > 0.68f &&
                   !iosAction.active
               ) {
@@ -1172,7 +1414,8 @@ jobs:
               }
 
               if (
-                  x > 0.55f && x <= 0.68f &&
+                  x > 0.55f &&
+                  x <= 0.68f &&
                   y > 0.72f &&
                   !iosExtra.active
               ) {
@@ -1181,13 +1424,17 @@ jobs:
                   return;
               }
 
-              if (x < 0.46f && !iosLeft.active) {
+              if (
+                  x < 0.46f &&
+                  !iosLeft.active
+              ) {
                   iosStartStick(
                       &iosLeft,
                       f->fingerId,
                       x,
                       y
                   );
+
                   return;
               }
 
@@ -1204,12 +1451,20 @@ jobs:
           static void iosFingerMotion(
               const SDL_TouchFingerEvent *f
           ) {
-              if (iosLeft.active && iosLeft.id == f->fingerId) {
+              if (
+                  iosLeft.active &&
+                  iosLeft.id ==
+                  f->fingerId
+              ) {
                   iosLeft.x = f->x;
                   iosLeft.y = f->y;
               }
 
-              if (iosRight.active && iosRight.id == f->fingerId) {
+              if (
+                  iosRight.active &&
+                  iosRight.id ==
+                  f->fingerId
+              ) {
                   iosRight.x = f->x;
                   iosRight.y = f->y;
               }
@@ -1218,112 +1473,250 @@ jobs:
           static void iosFingerUp(
               const SDL_TouchFingerEvent *f
           ) {
-              if (iosLeft.active && iosLeft.id == f->fingerId)
-                  iosLeft.active = false;
+              if (
+                  iosLeft.active &&
+                  iosLeft.id ==
+                  f->fingerId
+              )
+                  iosLeft.active =
+                      false;
 
-              if (iosRight.active && iosRight.id == f->fingerId)
-                  iosRight.active = false;
+              if (
+                  iosRight.active &&
+                  iosRight.id ==
+                  f->fingerId
+              )
+                  iosRight.active =
+                      false;
 
-              if (iosFire.active && iosFire.id == f->fingerId)
-                  iosFire.active = false;
+              if (
+                  iosFire.active &&
+                  iosFire.id ==
+                  f->fingerId
+              )
+                  iosFire.active =
+                      false;
 
-              if (iosAction.active && iosAction.id == f->fingerId)
-                  iosAction.active = false;
+              if (
+                  iosAction.active &&
+                  iosAction.id ==
+                  f->fingerId
+              )
+                  iosAction.active =
+                      false;
 
-              if (iosExtra.active && iosExtra.id == f->fingerId)
-                  iosExtra.active = false;
+              if (
+                  iosExtra.active &&
+                  iosExtra.id ==
+                  f->fingerId
+              )
+                  iosExtra.active =
+                      false;
 
-              if (iosPause.active && iosPause.id == f->fingerId)
-                  iosPause.active = false;
+              if (
+                  iosPause.active &&
+                  iosPause.id ==
+                  f->fingerId
+              )
+                  iosPause.active =
+                      false;
           }
 
-          static void iosApplyTouchGamepad(void) {
-              bool hasPhysicalController = false;
+          static void iosApplyTouchGamepad(
+              void
+          ) {
+              bool hasPhysicalController =
+                  false;
 
-              for (int i = 0; i < MAX_GAMEPADS; i++) {
+              for (
+                  int i = 0;
+                  i < MAX_GAMEPADS;
+                  i++
+              ) {
                   if (
                       openControllers[i] &&
-                      SDL_GameControllerGetAttached(openControllers[i])
+                      SDL_GameControllerGetAttached(
+                          openControllers[i]
+                      )
                   ) {
-                      hasPhysicalController = true;
+                      hasPhysicalController =
+                          true;
+
                       break;
                   }
               }
 
-              if (hasPhysicalController)
+              if (
+                  hasPhysicalController
+              )
                   return;
 
-              GamepadSlot *slot = &g_runner->gamepads->slots[0];
+              GamepadSlot *slot =
+                  &g_runner
+                      ->gamepads
+                      ->slots[0];
 
-              slot->connected = true;
-              slot->jid = 0;
+              slot->connected =
+                  true;
+
+              slot->jid =
+                  0;
 
               strncpy(
                   slot->description,
                   "XInput STANDARD GAMEPAD",
-                  sizeof(slot->description) - 1
+                  sizeof(
+                      slot->description
+                  ) - 1
               );
-              slot->description[sizeof(slot->description) - 1] = '\0';
+
+              slot->description[
+                  sizeof(
+                      slot->description
+                  ) - 1
+              ] = '\0';
 
               strncpy(
                   slot->guid,
                   "postvoid-ios-touch",
-                  sizeof(slot->guid) - 1
+                  sizeof(
+                      slot->guid
+                  ) - 1
               );
-              slot->guid[sizeof(slot->guid) - 1] = '\0';
 
-              const float radius = 0.105f;
+              slot->guid[
+                  sizeof(
+                      slot->guid
+                  ) - 1
+              ] = '\0';
+
+              const float radius =
+                  0.105f;
 
               if (iosLeft.active) {
-                  slot->axisValue[0] = iosClamp(
-                      (iosLeft.x - iosLeft.startX) / radius
-                  );
-                  slot->axisValue[1] = iosClamp(
-                      (iosLeft.y - iosLeft.startY) / radius
-                  );
+                  slot->axisValue[0] =
+                      iosClamp(
+                          (
+                              iosLeft.x -
+                              iosLeft.startX
+                          ) /
+                          radius
+                      );
+
+                  slot->axisValue[1] =
+                      iosClamp(
+                          (
+                              iosLeft.y -
+                              iosLeft.startY
+                          ) /
+                          radius
+                      );
               }
 
               if (iosRight.active) {
-                  slot->axisValue[2] = iosClamp(
-                      (iosRight.x - iosRight.startX) / radius
-                  );
-                  slot->axisValue[3] = iosClamp(
-                      (iosRight.y - iosRight.startY) / radius
-                  );
+                  slot->axisValue[2] =
+                      iosClamp(
+                          (
+                              iosRight.x -
+                              iosRight.startX
+                          ) /
+                          radius
+                      );
+
+                  slot->axisValue[3] =
+                      iosClamp(
+                          (
+                              iosRight.y -
+                              iosRight.startY
+                          ) /
+                          radius
+                      );
               }
 
-              /* A / X / RT / Start */
-              slot->buttonDown[0] = iosAction.active;
-              slot->buttonDown[2] = iosExtra.active;
-              slot->buttonDown[7] = iosFire.active;
-              slot->buttonDown[9] = iosPause.active;
+              slot->buttonDown[0] =
+                  iosAction.active;
 
-              slot->buttonValue[0] = iosAction.active ? 1.0f : 0.0f;
-              slot->buttonValue[2] = iosExtra.active ? 1.0f : 0.0f;
-              slot->buttonValue[7] = iosFire.active ? 1.0f : 0.0f;
-              slot->buttonValue[9] = iosPause.active ? 1.0f : 0.0f;
+              slot->buttonDown[2] =
+                  iosExtra.active;
 
-              for (int btn = 0; btn < GP_BUTTON_COUNT; btn++) {
-                  bool wasDown = slot->buttonDownPrev[btn];
+              slot->buttonDown[7] =
+                  iosFire.active;
 
-                  if (slot->buttonDown[btn] && !wasDown)
-                      slot->buttonPressed[btn] = true;
+              slot->buttonDown[9] =
+                  iosPause.active;
 
-                  if (!slot->buttonDown[btn] && wasDown)
-                      slot->buttonReleased[btn] = true;
+              slot->buttonValue[0] =
+                  iosAction.active
+                      ? 1.0f
+                      : 0.0f;
+
+              slot->buttonValue[2] =
+                  iosExtra.active
+                      ? 1.0f
+                      : 0.0f;
+
+              slot->buttonValue[7] =
+                  iosFire.active
+                      ? 1.0f
+                      : 0.0f;
+
+              slot->buttonValue[9] =
+                  iosPause.active
+                      ? 1.0f
+                      : 0.0f;
+
+              for (
+                  int btn = 0;
+                  btn < GP_BUTTON_COUNT;
+                  btn++
+              ) {
+                  bool wasDown =
+                      slot
+                          ->buttonDownPrev[
+                              btn
+                          ];
+
+                  if (
+                      slot
+                          ->buttonDown[
+                              btn
+                          ] &&
+                      !wasDown
+                  )
+                      slot
+                          ->buttonPressed[
+                              btn
+                          ] =
+                          true;
+
+                  if (
+                      !slot
+                          ->buttonDown[
+                              btn
+                          ] &&
+                      wasDown
+                  )
+                      slot
+                          ->buttonReleased[
+                              btn
+                          ] =
+                          true;
               }
 
-              /*
-               * RunnerGamepad_beginFrame copies connected to connectedPrev
-               * before polling. Force the startup discovered transition so
-               * POST VOID registers the synthetic touch controller.
-               */
-              if (iosDiscoveryFrames < 240) {
-                  slot->connectedPrev = false;
+              if (
+                  iosDiscoveryFrames <
+                  240
+              ) {
+                  slot->connectedPrev =
+                      false;
+
                   iosDiscoveryFrames++;
               }
 
-              g_runner->gamepads->connectedCount = 1;
+              g_runner
+                  ->gamepads
+                  ->connectedCount =
+                  1;
           }
 
           #endif
@@ -1331,8 +1724,11 @@ jobs:
 
           s = s.replace(
               anchor,
-              anchor + textwrap.dedent(touch_state),
-              1,
+              anchor +
+              textwrap.dedent(
+                  touch_state
+              ),
+              1
           )
 
           event_anchor = '''            case SDL_MOUSEWHEEL:
@@ -1340,29 +1736,43 @@ jobs:
                               RunnerMouse_onWheel(g_runner->mouse, (float)e.wheel.y);
                           break;'''
 
-          if event_anchor not in s:
-              raise SystemExit('Touch patch anchor 2 missing')
+          if (
+              event_anchor
+              not in s
+          ):
+              raise SystemExit(
+                  "event anchor missing"
+              )
 
-          event_replacement = event_anchor + r'''
+          event_replacement = (
+              event_anchor +
+              r'''
           #ifdef PLATFORM_IOS
                       case SDL_FINGERDOWN:
-                          iosFingerDown(&e.tfinger);
+                          iosFingerDown(
+                              &e.tfinger
+                          );
                           break;
 
                       case SDL_FINGERMOTION:
-                          iosFingerMotion(&e.tfinger);
+                          iosFingerMotion(
+                              &e.tfinger
+                          );
                           break;
 
                       case SDL_FINGERUP:
-                          iosFingerUp(&e.tfinger);
+                          iosFingerUp(
+                              &e.tfinger
+                          );
                           break;
           #endif
           '''
+          )
 
           s = s.replace(
               event_anchor,
               event_replacement,
-              1,
+              1
           )
 
           end_anchor = '''    }
@@ -1372,7 +1782,9 @@ jobs:
           }'''
 
           if end_anchor not in s:
-              raise SystemExit('Touch patch anchor 3 missing')
+              raise SystemExit(
+                  "event end anchor missing"
+              )
 
           end_replacement = '''    }
 
@@ -1387,175 +1799,431 @@ jobs:
           s = s.replace(
               end_anchor,
               end_replacement,
-              1,
+              1
           )
 
           platform_funcs_anchor = (
-              "void platformInitFunctions(Runner *runner) {\n"
-              "    g_runner = runner;\n"
-              "    runner->windowHasFocus = platformGetWindowFocus;\n"
-              "    runner->setCursor = platformSetCursor;\n"
-              "    runner->currentCursor = GML_CR_DEFAULT;\n"
+              "void platformInitFunctions(Runner *runner) {\\n"
+              "    g_runner = runner;\\n"
+              "    runner->windowHasFocus = platformGetWindowFocus;\\n"
+              "    runner->setCursor = platformSetCursor;\\n"
+              "    runner->currentCursor = GML_CR_DEFAULT;\\n"
               "}"
           )
 
           platform_funcs_replacement = (
-              "void platformInitFunctions(Runner *runner) {\n"
-              "    g_runner = runner;\n"
-              "    runner->windowHasFocus = platformGetWindowFocus;\n"
-              "    runner->setCursor = platformSetCursor;\n"
-              "    runner->currentCursor = GML_CR_DEFAULT;\n"
-              "\n"
-              "#ifdef PLATFORM_IOS\n"
-              "    iosApplyTouchGamepad();\n"
-              "#endif\n"
+              "void platformInitFunctions(Runner *runner) {\\n"
+              "    g_runner = runner;\\n"
+              "    runner->windowHasFocus = platformGetWindowFocus;\\n"
+              "    runner->setCursor = platformSetCursor;\\n"
+              "    runner->currentCursor = GML_CR_DEFAULT;\\n"
+              "\\n"
+              "#ifdef PLATFORM_IOS\\n"
+              "    iosApplyTouchGamepad();\\n"
+              "#endif\\n"
               "}"
           )
 
-          if platform_funcs_anchor not in s:
+          if (
+              platform_funcs_anchor
+              not in s
+          ):
               raise SystemExit(
-                  "Touch bootstrap anchor missing in platformInitFunctions"
+                  "platform funcs anchor missing"
               )
 
           s = s.replace(
               platform_funcs_anchor,
               platform_funcs_replacement,
-              1,
+              1
           )
 
           p.write_text(s)
 
+          ios_src = (
+              root /
+              "src/ios"
+          )
 
-          # ----------------------------------------------------------
-          # 6. Visible iPhone controls overlay.
-          # ----------------------------------------------------------
-          ios_src = root / 'src/ios'
-          ios_src.mkdir(parents=True, exist_ok=True)
+          ios_src.mkdir(
+              parents=True,
+              exist_ok=True
+          )
 
-          overlay_m = r"""
+          overlay_m = r'''
           #import <UIKit/UIKit.h>
           #import <QuartzCore/QuartzCore.h>
 
-          static UIImageView *PVImage(NSString *name, CGFloat size, CGFloat alpha) {
-              UIImage *image = [UIImage imageNamed:name];
-              UIImageView *view = [[UIImageView alloc] initWithImage:image];
-              view.translatesAutoresizingMaskIntoConstraints = NO;
-              view.contentMode = UIViewContentModeScaleAspectFit;
-              view.alpha = alpha;
-              view.userInteractionEnabled = NO;
+          static UIImageView *PVImage(
+              NSString *name,
+              CGFloat size,
+              CGFloat alpha
+          ) {
+              UIImage *image =
+                  [UIImage imageNamed:name];
+
+              UIImageView *view =
+                  [[UIImageView alloc]
+                      initWithImage:image];
+
+              view.translatesAutoresizingMaskIntoConstraints =
+                  NO;
+
+              view.contentMode =
+                  UIViewContentModeScaleAspectFit;
+
+              view.alpha =
+                  alpha;
+
+              view.userInteractionEnabled =
+                  NO;
+
               [NSLayoutConstraint activateConstraints:@[
-                  [view.widthAnchor constraintEqualToConstant:size],
-                  [view.heightAnchor constraintEqualToConstant:size]
+                  [
+                      view.widthAnchor
+                      constraintEqualToConstant:
+                      size
+                  ],
+                  [
+                      view.heightAnchor
+                      constraintEqualToConstant:
+                      size
+                  ]
               ]];
+
               return view;
           }
 
-          static UIView *PVStickRing(CGFloat size) {
-              UIView *ring = [[UIView alloc] initWithFrame:CGRectZero];
-              ring.translatesAutoresizingMaskIntoConstraints = NO;
-              ring.userInteractionEnabled = NO;
-              ring.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.10];
-              ring.layer.borderWidth = 3.0;
-              ring.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.58].CGColor;
-              ring.layer.cornerRadius = size / 2.0;
+          static UIView *PVStickRing(
+              CGFloat size
+          ) {
+              UIView *ring =
+                  [[UIView alloc]
+                      initWithFrame:
+                      CGRectZero];
 
-              [NSLayoutConstraint activateConstraints:@[
-                  [ring.widthAnchor constraintEqualToConstant:size],
-                  [ring.heightAnchor constraintEqualToConstant:size]
-              ]];
+              ring.translatesAutoresizingMaskIntoConstraints =
+                  NO;
 
-              UIView *dot = [[UIView alloc] initWithFrame:CGRectZero];
-              dot.translatesAutoresizingMaskIntoConstraints = NO;
-              dot.userInteractionEnabled = NO;
-              dot.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.42];
-              CGFloat dotSize = size * 0.30;
-              dot.layer.cornerRadius = dotSize / 2.0;
+              ring.userInteractionEnabled =
+                  NO;
+
+              ring.backgroundColor =
+                  [UIColor
+                      colorWithWhite:0.0
+                      alpha:0.10];
+
+              ring.layer.borderWidth =
+                  3.0;
+
+              ring.layer.borderColor =
+                  [UIColor
+                      colorWithWhite:1.0
+                      alpha:0.58]
+                      .CGColor;
+
+              ring.layer.cornerRadius =
+                  size / 2.0;
+
+              [
+                  NSLayoutConstraint
+                  activateConstraints:@[
+                      [
+                          ring.widthAnchor
+                          constraintEqualToConstant:
+                          size
+                      ],
+                      [
+                          ring.heightAnchor
+                          constraintEqualToConstant:
+                          size
+                      ]
+                  ]
+              ];
+
+              UIView *dot =
+                  [[UIView alloc]
+                      initWithFrame:
+                      CGRectZero];
+
+              dot.translatesAutoresizingMaskIntoConstraints =
+                  NO;
+
+              dot.userInteractionEnabled =
+                  NO;
+
+              dot.backgroundColor =
+                  [UIColor
+                      colorWithWhite:1.0
+                      alpha:0.42];
+
+              CGFloat dotSize =
+                  size * 0.30;
+
+              dot.layer.cornerRadius =
+                  dotSize / 2.0;
+
               [ring addSubview:dot];
 
-              [NSLayoutConstraint activateConstraints:@[
-                  [dot.widthAnchor constraintEqualToConstant:dotSize],
-                  [dot.heightAnchor constraintEqualToConstant:dotSize],
-                  [dot.centerXAnchor constraintEqualToAnchor:ring.centerXAnchor],
-                  [dot.centerYAnchor constraintEqualToAnchor:ring.centerYAnchor]
-              ]];
+              [
+                  NSLayoutConstraint
+                  activateConstraints:@[
+                      [
+                          dot.widthAnchor
+                          constraintEqualToConstant:
+                          dotSize
+                      ],
+                      [
+                          dot.heightAnchor
+                          constraintEqualToConstant:
+                          dotSize
+                      ],
+                      [
+                          dot.centerXAnchor
+                          constraintEqualToAnchor:
+                          ring.centerXAnchor
+                      ],
+                      [
+                          dot.centerYAnchor
+                          constraintEqualToAnchor:
+                          ring.centerYAnchor
+                      ]
+                  ]
+              ];
 
               return ring;
           }
 
-          void IOSOverlayInstall(void) {
-              dispatch_async(dispatch_get_main_queue(), ^{
-                  UIApplication *app = [UIApplication sharedApplication];
-                  UIWindow *window = app.keyWindow;
+          void IOSOverlayInstall(
+              void
+          ) {
+              dispatch_async(
+                  dispatch_get_main_queue(),
+                  ^{
+                      UIApplication *app =
+                          [
+                              UIApplication
+                              sharedApplication
+                          ];
 
-                  if (!window) {
-                      for (UIWindow *candidate in app.windows) {
-                          if (!candidate.hidden) {
-                              window = candidate;
-                              break;
+                      UIWindow *window =
+                          app.keyWindow;
+
+                      if (!window) {
+                          for (
+                              UIWindow *candidate
+                              in app.windows
+                          ) {
+                              if (
+                                  !candidate.hidden
+                              ) {
+                                  window =
+                                      candidate;
+
+                                  break;
+                              }
                           }
                       }
+
+                      if (!window)
+                          return;
+
+                      UIView *old =
+                          [
+                              window
+                              viewWithTag:
+                              0x50564F49
+                          ];
+
+                      if (old)
+                          [
+                              old
+                              removeFromSuperview
+                          ];
+
+                      UIView *overlay =
+                          [[UIView alloc]
+                              initWithFrame:
+                              window.bounds];
+
+                      overlay.tag =
+                          0x50564F49;
+
+                      overlay.backgroundColor =
+                          UIColor.clearColor;
+
+                      overlay.userInteractionEnabled =
+                          NO;
+
+                      overlay.autoresizingMask =
+                          UIViewAutoresizingFlexibleWidth |
+                          UIViewAutoresizingFlexibleHeight;
+
+                      [
+                          window
+                          addSubview:
+                          overlay
+                      ];
+
+                      UILayoutGuide *safe =
+                          window.safeAreaLayoutGuide;
+
+                      UIImageView *pause =
+                          PVImage(
+                              @"PV_pause",
+                              58.0,
+                              0.68
+                          );
+
+                      UIImageView *fire =
+                          PVImage(
+                              @"PV_fire",
+                              82.0,
+                              0.72
+                          );
+
+                      UIImageView *jump =
+                          PVImage(
+                              @"PV_jump",
+                              70.0,
+                              0.66
+                          );
+
+                      UIImageView *extra =
+                          PVImage(
+                              @"PV_extra",
+                              64.0,
+                              0.62
+                          );
+
+                      UIView *leftStick =
+                          PVStickRing(
+                              118.0
+                          );
+
+                      [
+                          overlay
+                          addSubview:
+                          pause
+                      ];
+
+                      [
+                          overlay
+                          addSubview:
+                          fire
+                      ];
+
+                      [
+                          overlay
+                          addSubview:
+                          jump
+                      ];
+
+                      [
+                          overlay
+                          addSubview:
+                          extra
+                      ];
+
+                      [
+                          overlay
+                          addSubview:
+                          leftStick
+                      ];
+
+                      [
+                          NSLayoutConstraint
+                          activateConstraints:@[
+                              [
+                                  pause.trailingAnchor
+                                  constraintEqualToAnchor:
+                                  safe.trailingAnchor
+                                  constant:-14.0
+                              ],
+                              [
+                                  pause.topAnchor
+                                  constraintEqualToAnchor:
+                                  safe.topAnchor
+                                  constant:12.0
+                              ],
+                              [
+                                  fire.trailingAnchor
+                                  constraintEqualToAnchor:
+                                  safe.trailingAnchor
+                                  constant:-18.0
+                              ],
+                              [
+                                  fire.bottomAnchor
+                                  constraintEqualToAnchor:
+                                  safe.bottomAnchor
+                                  constant:-18.0
+                              ],
+                              [
+                                  jump.trailingAnchor
+                                  constraintEqualToAnchor:
+                                  fire.leadingAnchor
+                                  constant:-8.0
+                              ],
+                              [
+                                  jump.bottomAnchor
+                                  constraintEqualToAnchor:
+                                  safe.bottomAnchor
+                                  constant:-24.0
+                              ],
+                              [
+                                  extra.trailingAnchor
+                                  constraintEqualToAnchor:
+                                  jump.leadingAnchor
+                                  constant:-8.0
+                              ],
+                              [
+                                  extra.bottomAnchor
+                                  constraintEqualToAnchor:
+                                  safe.bottomAnchor
+                                  constant:-27.0
+                              ],
+                              [
+                                  leftStick.leadingAnchor
+                                  constraintEqualToAnchor:
+                                  safe.leadingAnchor
+                                  constant:24.0
+                              ],
+                              [
+                                  leftStick.bottomAnchor
+                                  constraintEqualToAnchor:
+                                  safe.bottomAnchor
+                                  constant:-20.0
+                              ]
+                          ]
+                      ];
+
+                      [
+                          window
+                          bringSubviewToFront:
+                          overlay
+                      ];
                   }
-
-                  if (!window) return;
-
-                  UIView *old = [window viewWithTag:0x50564F49];
-                  if (old) [old removeFromSuperview];
-
-                  UIView *overlay = [[UIView alloc] initWithFrame:window.bounds];
-                  overlay.tag = 0x50564F49;
-                  overlay.backgroundColor = UIColor.clearColor;
-                  overlay.userInteractionEnabled = NO;
-                  overlay.autoresizingMask =
-                      UIViewAutoresizingFlexibleWidth |
-                      UIViewAutoresizingFlexibleHeight;
-
-                  [window addSubview:overlay];
-
-                  UILayoutGuide *safe = window.safeAreaLayoutGuide;
-
-                  UIImageView *pause = PVImage(@"PV_pause", 58.0, 0.68);
-                  UIImageView *fire  = PVImage(@"PV_fire", 82.0, 0.72);
-                  UIImageView *jump  = PVImage(@"PV_jump", 70.0, 0.66);
-                  UIImageView *extra = PVImage(@"PV_extra", 64.0, 0.62);
-                  UIView *leftStick  = PVStickRing(118.0);
-
-                  [overlay addSubview:pause];
-                  [overlay addSubview:fire];
-                  [overlay addSubview:jump];
-                  [overlay addSubview:extra];
-                  [overlay addSubview:leftStick];
-
-                  [NSLayoutConstraint activateConstraints:@[
-                      [pause.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor constant:-14.0],
-                      [pause.topAnchor constraintEqualToAnchor:safe.topAnchor constant:12.0],
-
-                      [fire.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor constant:-18.0],
-                      [fire.bottomAnchor constraintEqualToAnchor:safe.bottomAnchor constant:-18.0],
-
-                      [jump.trailingAnchor constraintEqualToAnchor:fire.leadingAnchor constant:-8.0],
-                      [jump.bottomAnchor constraintEqualToAnchor:safe.bottomAnchor constant:-24.0],
-
-                      [extra.trailingAnchor constraintEqualToAnchor:jump.leadingAnchor constant:-8.0],
-                      [extra.bottomAnchor constraintEqualToAnchor:safe.bottomAnchor constant:-27.0],
-
-                      [leftStick.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor constant:24.0],
-                      [leftStick.bottomAnchor constraintEqualToAnchor:safe.bottomAnchor constant:-20.0]
-                  ]];
-
-                  [window bringSubviewToFront:overlay];
-              });
+              );
           }
-          """
+          '''
 
-          (ios_src / 'ios_overlay.m').write_text(
-              textwrap.dedent(overlay_m).lstrip()
+          (
+              ios_src /
+              "ios_overlay.m"
+          ).write_text(
+              textwrap.dedent(
+                  overlay_m
+              ).lstrip()
           )
 
-          # ----------------------------------------------------------
-          # 6. iPhone Info.plist.
-          # ----------------------------------------------------------
-          ios = root / 'ios'
-          ios.mkdir(exist_ok=True)
+          ios = (
+              root /
+              "ios"
+          )
+
+          ios.mkdir(
+              exist_ok=True
+          )
 
           plist = r'''<?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -1586,7 +2254,7 @@ jobs:
               <string>1.0</string>
 
               <key>CFBundleVersion</key>
-              <string>1</string>
+              <string>17</string>
 
               <key>CFBundleIconFiles</key>
               <array>
@@ -1646,19 +2314,402 @@ jobs:
           </plist>
           '''
 
-          (ios / 'Info.plist').write_text(
-              textwrap.dedent(plist).lstrip()
+          (
+              ios /
+              "Info.plist"
+          ).write_text(
+              textwrap.dedent(
+                  plist
+              ).lstrip()
           )
 
-          print('iOS runner patch complete')
+          print(
+              "iOS runner patch complete"
+          )
+          PY
+
+      - name: v17 GameMaker 3D menu fix
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python3 <<'PY'
+          from pathlib import Path
+
+          vm = Path(
+              "work/Butterscotch/src/vm_builtins.c"
+          )
+
+          s = vm.read_text()
+
+          include_anchor = (
+              '#include "math_compat.h"\n'
+          )
+
+          include_repl = '''#include "math_compat.h"
+          #ifdef PLATFORM_IOS
+          #include <OpenGLES/ES3/gl.h>
+          #endif
+          '''
+
+          if include_anchor not in s:
+              raise SystemExit(
+                  "v17 include anchor missing"
+              )
+
+          s = s.replace(
+              include_anchor,
+              include_repl,
+              1
+          )
+
+          matrix_anchor = '''static RValue builtin_matrix_build_identity(MAYBE_UNUSED VMContext *ctx, MAYBE_UNUSED RValue *args, MAYBE_UNUSED int32_t argCount) {
+              Matrix4f id;
+              return RValue_makeArray(matrixToGml(ctx->dataWin, Matrix4f_identity(&id)));
+          }'''
+
+          matrix_repl = r'''static RValue builtin_matrix_build(
+              VMContext *ctx,
+              RValue *args,
+              int32_t argCount
+          ) {
+              REQUIRE_ARGC_AT_LEAST(
+                  "matrix_build",
+                  9,
+                  RValue_makeUndefined()
+              );
+
+              REQUIRE_ARGC_AT_MOST(
+                  "matrix_build",
+                  10,
+                  RValue_makeUndefined()
+              );
+
+              GMLReal x =
+                  RValue_toReal(args[0]);
+
+              GMLReal y =
+                  RValue_toReal(args[1]);
+
+              GMLReal z =
+                  RValue_toReal(args[2]);
+
+              GMLReal xr =
+                  -RValue_toReal(args[3]) *
+                  (
+                      (GMLReal)M_PI /
+                      (GMLReal)180.0
+                  );
+
+              GMLReal yr =
+                  -RValue_toReal(args[4]) *
+                  (
+                      (GMLReal)M_PI /
+                      (GMLReal)180.0
+                  );
+
+              GMLReal zr =
+                  -RValue_toReal(args[5]) *
+                  (
+                      (GMLReal)M_PI /
+                      (GMLReal)180.0
+                  );
+
+              GMLReal sx =
+                  RValue_toReal(args[6]);
+
+              GMLReal sy =
+                  RValue_toReal(args[7]);
+
+              GMLReal sz =
+                  RValue_toReal(args[8]);
+
+              GMLReal sinp =
+                  GMLReal_sin(xr);
+
+              GMLReal cosp =
+                  GMLReal_cos(xr);
+
+              GMLReal sinh =
+                  GMLReal_sin(yr);
+
+              GMLReal cosh =
+                  GMLReal_cos(yr);
+
+              GMLReal sinr =
+                  GMLReal_sin(zr);
+
+              GMLReal cosr =
+                  GMLReal_cos(zr);
+
+              GMLReal sinrsinp =
+                  -sinr * -sinp;
+
+              GMLReal cosrsinp =
+                  cosr * -sinp;
+
+              Matrix4f m;
+
+              m.m[0] =
+                  (
+                      (cosr * cosh) +
+                      (
+                          sinrsinp *
+                          -sinh
+                      )
+                  ) *
+                  sx;
+
+              m.m[4] =
+                  (
+                      -sinr *
+                      cosp
+                  ) *
+                  sx;
+
+              m.m[8] =
+                  (
+                      (cosr * sinh) +
+                      (
+                          sinrsinp *
+                          cosh
+                      )
+                  ) *
+                  sx;
+
+              m.m[12] =
+                  x;
+
+              m.m[1] =
+                  (
+                      (sinr * cosh) +
+                      (
+                          cosrsinp *
+                          -sinh
+                      )
+                  ) *
+                  sy;
+
+              m.m[5] =
+                  (
+                      cosr *
+                      cosp
+                  ) *
+                  sy;
+
+              m.m[9] =
+                  (
+                      (sinr * sinh) +
+                      (
+                          cosrsinp *
+                          cosh
+                      )
+                  ) *
+                  sy;
+
+              m.m[13] =
+                  y;
+
+              m.m[2] =
+                  (
+                      cosp *
+                      -sinh
+                  ) *
+                  sz;
+
+              m.m[6] =
+                  sinp *
+                  sz;
+
+              m.m[10] =
+                  (
+                      cosp *
+                      cosh
+                  ) *
+                  sz;
+
+              m.m[14] =
+                  z;
+
+              m.m[3] =
+                  0.0f;
+
+              m.m[7] =
+                  0.0f;
+
+              m.m[11] =
+                  0.0f;
+
+              m.m[15] =
+                  1.0f;
+
+              if (
+                  argCount >= 10 &&
+                  rvalueIsMatrix(
+                      args[9]
+                  )
+              ) {
+                  GMLArray *dest =
+                      args[9].array;
+
+                  repeat(
+                      16,
+                      i
+                  ) {
+                      *GMLArray_slot(
+                          dest,
+                          i
+                      ) =
+                          RValue_makeReal(
+                              m.m[i]
+                          );
+                  }
+
+                  return
+                      RValue_makeArrayWeak(
+                          dest
+                      );
+              }
+
+              return
+                  RValue_makeArray(
+                      matrixToGml(
+                          ctx->dataWin,
+                          &m
+                      )
+                  );
+          }
+
+          static RValue builtin_postvoid_gpu_set_ztestenable(
+              MAYBE_UNUSED VMContext *ctx,
+              RValue *args,
+              int32_t argCount
+          ) {
+              if (argCount < 1)
+                  return
+                      RValue_makeUndefined();
+
+          #ifdef PLATFORM_IOS
+              if (
+                  RValue_toBool(
+                      args[0]
+                  )
+              ) {
+                  glEnable(
+                      GL_DEPTH_TEST
+                  );
+
+                  glDepthFunc(
+                      GL_LEQUAL
+                  );
+              }
+              else {
+                  glDisable(
+                      GL_DEPTH_TEST
+                  );
+              }
+          #endif
+
+              return
+                  RValue_makeUndefined();
+          }
+
+          static RValue builtin_postvoid_gpu_set_zwriteenable(
+              MAYBE_UNUSED VMContext *ctx,
+              RValue *args,
+              int32_t argCount
+          ) {
+              if (argCount < 1)
+                  return
+                      RValue_makeUndefined();
+
+          #ifdef PLATFORM_IOS
+              glDepthMask(
+                  RValue_toBool(
+                      args[0]
+                  )
+                      ? GL_TRUE
+                      : GL_FALSE
+              );
+          #endif
+
+              return
+                  RValue_makeUndefined();
+          }
+
+          static RValue builtin_postvoid_compat_noop(
+              MAYBE_UNUSED VMContext *ctx,
+              MAYBE_UNUSED RValue *args,
+              MAYBE_UNUSED int32_t argCount
+          ) {
+              return
+                  RValue_makeUndefined();
+          }
+
+          static RValue builtin_matrix_build_identity(
+              MAYBE_UNUSED VMContext *ctx,
+              MAYBE_UNUSED RValue *args,
+              MAYBE_UNUSED int32_t argCount
+          ) {
+              Matrix4f id;
+
+              return
+                  RValue_makeArray(
+                      matrixToGml(
+                          ctx->dataWin,
+                          Matrix4f_identity(
+                              &id
+                          )
+                      )
+                  );
+          }'''
+
+          if matrix_anchor not in s:
+              raise SystemExit(
+                  "v17 matrix anchor missing"
+              )
+
+          s = s.replace(
+              matrix_anchor,
+              matrix_repl,
+              1
+          )
+
+          reg_anchor = '''    VM_registerBuiltin(ctx, "matrix_build_identity", builtin_matrix_build_identity);'''
+
+          reg_repl = '''    VM_registerBuiltin(ctx, "matrix_build", builtin_matrix_build);
+              VM_registerBuiltin(ctx, "matrix_build_identity", builtin_matrix_build_identity);
+              VM_registerBuiltin(ctx, "gpu_set_ztestenable", builtin_postvoid_gpu_set_ztestenable);
+              VM_registerBuiltin(ctx, "gpu_set_zwriteenable", builtin_postvoid_gpu_set_zwriteenable);
+              VM_registerBuiltin(ctx, "gpu_set_texfilter", builtin_postvoid_compat_noop);
+              VM_registerBuiltin(ctx, "sprite_prefetch", builtin_postvoid_compat_noop);
+              VM_registerBuiltin(ctx, "camera_set_update_script", builtin_postvoid_compat_noop);
+              VM_registerBuiltin(ctx, "display_reset", builtin_postvoid_compat_noop);
+              VM_registerBuiltin(ctx, "buffer_async_group_option", builtin_postvoid_compat_noop);'''
+
+          if reg_anchor not in s:
+              raise SystemExit(
+                  "v17 registration anchor missing"
+              )
+
+          s = s.replace(
+              reg_anchor,
+              reg_repl,
+              1
+          )
+
+          vm.write_text(s)
+
+          print(
+              "POST VOID v17 "
+              "matrix/menu patch applied"
+          )
           PY
 
       - name: Configure ARM64 iOS runner
         shell: bash
         run: |
           set -euo pipefail
-
-          echo "EMERGENCY BUILD: using built-in silent audio backend to bypass iOS miniaudio compile failure."
 
           rm -rf work/build
 
@@ -1684,7 +2735,8 @@ jobs:
             -DENABLE_VM_OPCODE_PROFILER=OFF \
             -DENABLE_VM_STUB_LOGS=ON \
             -DENABLE_ASAN=OFF \
-            2>&1 | tee logs/configure.log
+            2>&1 |
+            tee logs/configure.log
 
       - name: Compile ARM64 iOS runner
         shell: bash
@@ -1695,7 +2747,8 @@ jobs:
             --build work/build \
             --config Release \
             --target butterscotch \
-            2>&1 | tee logs/build.log
+            2>&1 |
+            tee logs/build.log
 
           APP="$(
             find work/build \
@@ -1704,56 +2757,103 @@ jobs:
               | head -n 1
           )"
 
-          if [ -z "$APP" ] || [ ! -d "$APP" ]; then
-            echo "ERROR: PostVoid.app was not produced."
-            find work/build -maxdepth 6 -type f | sort | tail -300
+          if [
+            -z "$APP"
+          ] || [
+            ! -d "$APP"
+          ]; then
+            echo \
+              "ERROR: PostVoid.app was not produced."
+
+            find work/build \
+              -maxdepth 6 \
+              -type f \
+              | sort \
+              | tail -300
+
             exit 1
           fi
 
-          echo "APP=$APP" >> "$GITHUB_ENV"
+          echo \
+            "APP=$APP" \
+            >> "$GITHUB_ENV"
 
-          echo "Built app: $APP"
+          echo \
+            "Built app: $APP"
+
           ls -la "$APP"
 
-          test -f "$APP/PostVoid"
-          file "$APP/PostVoid"
-          lipo -info "$APP/PostVoid" || true
+          test \
+            -f "$APP/PostVoid"
+
+          file \
+            "$APP/PostVoid"
+
+          lipo \
+            -info "$APP/PostVoid" \
+            || true
 
       - name: Add complete POST VOID game data
         shell: bash
         run: |
           set -euo pipefail
 
-          cp -R work/game/. "$APP/"
+          cp -R \
+            work/game/. \
+            "$APP/"
 
-          cp work/ui/Icon-60@2x.png "$APP/Icon-60@2x.png"
-          cp work/ui/Icon-60@3x.png "$APP/Icon-60@3x.png"
-          cp work/ui/PV_pause.png "$APP/PV_pause.png"
-          cp work/ui/PV_fire.png "$APP/PV_fire.png"
-          cp work/ui/PV_jump.png "$APP/PV_jump.png"
-          cp work/ui/PV_extra.png "$APP/PV_extra.png"
+          cp \
+            work/ui/Icon-60@2x.png \
+            "$APP/Icon-60@2x.png"
 
-          test -f "$APP/Icon-60@3x.png"
-          test -f "$APP/PV_pause.png"
-          test -f "$APP/PV_fire.png"
-          test -f "$APP/PV_jump.png"
-          test -f "$APP/PV_extra.png"
+          cp \
+            work/ui/Icon-60@3x.png \
+            "$APP/Icon-60@3x.png"
 
-          test -f "$APP/game.droid"
-          test -f "$APP/options.ini"
-          test -f "$APP/localization.json"
-          test -f "$APP/gamecontrollerdb.txt"
+          cp \
+            work/ui/PV_pause.png \
+            "$APP/PV_pause.png"
 
-          echo "Final app contents:"
+          cp \
+            work/ui/PV_fire.png \
+            "$APP/PV_fire.png"
+
+          cp \
+            work/ui/PV_jump.png \
+            "$APP/PV_jump.png"
+
+          cp \
+            work/ui/PV_extra.png \
+            "$APP/PV_extra.png"
+
+          test \
+            -f "$APP/game.droid"
+
+          test \
+            -f "$APP/options.ini"
+
+          test \
+            -f "$APP/localization.json"
+
+          test \
+            -f "$APP/gamecontrollerdb.txt"
+
+          echo \
+            "Final app contents:"
+
           du -sh "$APP"
-          ls -lh "$APP/game.droid"
+
+          ls -lh \
+            "$APP/game.droid"
 
       - name: Ad-hoc sign
         shell: bash
         run: |
           set -euo pipefail
 
-          xattr -cr "$APP" || true
+          xattr \
+            -cr "$APP" \
+            || true
 
           codesign \
             --force \
@@ -1761,19 +2861,27 @@ jobs:
             --timestamp=none \
             "$APP"
 
-          codesign -vv "$APP"
+          codesign \
+            -vv \
+            "$APP"
 
       - name: Build IPA
         shell: bash
         run: |
           set -euo pipefail
 
-          rm -rf work/Payload
-          mkdir -p work/Payload
+          rm -rf \
+            work/Payload
 
-          cp -R "$APP" work/Payload/PostVoid.app
+          mkdir -p \
+            work/Payload
 
-          rm -f out/POST-VOID-iOS-v16-WINDOWS-INPUTFIX-unsigned.ipa
+          cp -R \
+            "$APP" \
+            work/Payload/PostVoid.app
+
+          rm -f \
+            out/POST-VOID-iOS-v17-MATRIX-MENUFIX-unsigned.ipa
 
           ditto \
             -c \
@@ -1781,18 +2889,22 @@ jobs:
             --sequesterRsrc \
             --keepParent \
             work/Payload \
-            out/POST-VOID-iOS-v16-WINDOWS-INPUTFIX-unsigned.ipa
+            out/POST-VOID-iOS-v17-MATRIX-MENUFIX-unsigned.ipa
 
-          test -s out/POST-VOID-iOS-v16-WINDOWS-INPUTFIX-unsigned.ipa
+          test \
+            -s out/POST-VOID-iOS-v17-MATRIX-MENUFIX-unsigned.ipa
 
-          echo "IPA ready:"
-          ls -lh out/POST-VOID-iOS-v16-WINDOWS-INPUTFIX-unsigned.ipa
+          echo \
+            "IPA ready:"
+
+          ls -lh \
+            out/POST-VOID-iOS-v17-MATRIX-MENUFIX-unsigned.ipa
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: POST-VOID-iOS-v16-WINDOWS-INPUTFIX
-          path: out/POST-VOID-iOS-v16-WINDOWS-INPUTFIX-unsigned.ipa
+          name: POST-VOID-iOS-v17-MATRIX-MENUFIX
+          path: out/POST-VOID-iOS-v17-MATRIX-MENUFIX-unsigned.ipa
           if-no-files-found: error
           compression-level: 0
 
