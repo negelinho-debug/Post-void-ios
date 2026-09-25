@@ -484,6 +484,48 @@ jobs:
               boot_tail_replacement,
           )
 
+
+          # IMPORTANT iOS fix:
+          # SDL/UIKit does NOT render to framebuffer 0. Its CAEAGLLayer owns
+          # a real non-zero framebuffer. Butterscotch assumes desktop GL's
+          # host framebuffer is 0, so the game renders correctly into the
+          # application surface and then blits it into framebuffer 0, which
+          # is not the visible iPhone drawable -> black screen.
+          #
+          # Capture the framebuffer SDL has bound after creating its iOS GL
+          # context and use that as Butterscotch's host framebuffer.
+          loop_hostfb_anchor = '''        if (gfx == MODERN_GL) {
+              renderer = GLRenderer_create();
+              hostFramebuffer = &((GLModernRenderer *)renderer)->hostFramebuffer;
+          }'''
+
+          loop_hostfb_replacement = r'''        if (gfx == MODERN_GL) {
+              renderer = GLRenderer_create();
+              hostFramebuffer = &((GLModernRenderer *)renderer)->hostFramebuffer;
+
+          #ifdef PLATFORM_IOS
+              GLint iosDrawableFramebuffer = 0;
+              glGetIntegerv(
+                  GL_FRAMEBUFFER_BINDING,
+                  &iosDrawableFramebuffer
+              );
+
+              ((GLModernRenderer *)renderer)->hostFramebuffer =
+                  (GLuint)iosDrawableFramebuffer;
+
+              logInfo(
+                  "iOS: SDL drawable framebuffer = %u\n",
+                  (unsigned int)iosDrawableFramebuffer
+              );
+          #endif
+          }'''
+
+          replace(
+              'src/loop.c',
+              loop_hostfb_anchor,
+              loop_hostfb_replacement,
+          )
+
           # ----------------------------------------------------------
           # 2. Build SDL2 inside the same Xcode project on iOS.
           # ----------------------------------------------------------
@@ -1445,7 +1487,7 @@ jobs:
 
           cp -R "$APP" work/Payload/PostVoid.app
 
-          rm -f out/POST-VOID-iOS-v10-ANCHORFIX-ICON-BUTTONS-unsigned.ipa
+          rm -f out/POST-VOID-iOS-v11-FRAMEBUFFERFIX-ICON-BUTTONS-unsigned.ipa
 
           ditto \
             -c \
@@ -1453,18 +1495,18 @@ jobs:
             --sequesterRsrc \
             --keepParent \
             work/Payload \
-            out/POST-VOID-iOS-v10-ANCHORFIX-ICON-BUTTONS-unsigned.ipa
+            out/POST-VOID-iOS-v11-FRAMEBUFFERFIX-ICON-BUTTONS-unsigned.ipa
 
-          test -s out/POST-VOID-iOS-v10-ANCHORFIX-ICON-BUTTONS-unsigned.ipa
+          test -s out/POST-VOID-iOS-v11-FRAMEBUFFERFIX-ICON-BUTTONS-unsigned.ipa
 
           echo "IPA ready:"
-          ls -lh out/POST-VOID-iOS-v10-ANCHORFIX-ICON-BUTTONS-unsigned.ipa
+          ls -lh out/POST-VOID-iOS-v11-FRAMEBUFFERFIX-ICON-BUTTONS-unsigned.ipa
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: POST-VOID-iOS-v10-ANCHORFIX-ICON-BUTTONS
-          path: out/POST-VOID-iOS-v10-ANCHORFIX-ICON-BUTTONS-unsigned.ipa
+          name: POST-VOID-iOS-v11-FRAMEBUFFERFIX-ICON-BUTTONS
+          path: out/POST-VOID-iOS-v11-FRAMEBUFFERFIX-ICON-BUTTONS-unsigned.ipa
           if-no-files-found: error
           compression-level: 0
 
