@@ -47,13 +47,19 @@ jobs:
 
           def git_show(commit, path):
               return subprocess.check_output(
-                  ["git", "show", f"{commit}:{path}"],
+                  [
+                      "git",
+                      "show",
+                      f"{commit}:{path}",
+                  ],
                   text=True,
               )
 
 
           def refresh_github_env():
-              env_path = os.environ.get("GITHUB_ENV")
+              env_path = os.environ.get(
+                  "GITHUB_ENV"
+              )
 
               if not env_path:
                   return
@@ -66,13 +72,18 @@ jobs:
               for line in path.read_text(
                   errors="ignore"
               ).splitlines():
+
                   if not line:
                       continue
 
                   if "=" not in line:
                       continue
 
-                  key, value = line.split("=", 1)
+                  key, value = line.split(
+                      "=",
+                      1,
+                  )
+
                   key = key.strip()
 
                   if key:
@@ -86,7 +97,11 @@ jobs:
               print("=" * 72)
 
               subprocess.run(
-                  ["/bin/bash", "-c", script],
+                  [
+                      "/bin/bash",
+                      "-c",
+                      script,
+                  ],
                   check=True,
                   env=os.environ.copy(),
               )
@@ -94,10 +109,16 @@ jobs:
               refresh_github_env()
 
 
-          def replace_once(text, old, new, label):
+          def replace_once(
+              text,
+              old,
+              new,
+              label,
+          ):
               if old not in text:
                   raise SystemExit(
-                      f"v19 patch anchor missing: {label}"
+                      "v19 patch anchor missing: "
+                      + label
                   )
 
               return text.replace(
@@ -113,37 +134,149 @@ jobs:
                       "git",
                       "log",
                       "--format=%H",
+                      "--all",
                       "--",
                       WORKFLOW_PATH,
                   ],
                   text=True,
               ).splitlines()
 
+              print(
+                  "Searching git history "
+                  "for successful v18 workflow..."
+              )
+
+              candidates = []
+
               for commit in commits:
                   try:
-                      text = git_show(
+                      workflow_text = git_show(
                           commit,
                           WORKFLOW_PATH,
                       )
                   except subprocess.CalledProcessError:
                       continue
 
+                  lower = workflow_text.lower()
+
                   if (
-                      "name: POST VOID iOS v18"
-                      not in text
+                      "post void ios v18"
+                      not in lower
                   ):
                       continue
 
+                  candidates.append(
+                      (
+                          commit,
+                          workflow_text,
+                      )
+                  )
+
+              if not candidates:
+                  raise SystemExit(
+                      "ERROR: No POST VOID v18 "
+                      "workflow was found in git history."
+                  )
+
+              print(
+                  "Found",
+                  len(candidates),
+                  "v18 workflow candidate(s).",
+              )
+
+              for commit, workflow_text in candidates:
+                  try:
+                      workflow = yaml.safe_load(
+                          workflow_text
+                      )
+                  except Exception as exc:
+                      print(
+                          "Skipping invalid YAML:",
+                          commit,
+                          exc,
+                      )
+                      continue
+
+                  jobs = workflow.get(
+                      "jobs",
+                      {},
+                  )
+
+                  build_job = jobs.get(
+                      "build",
+                      {},
+                  )
+
+                  steps = build_job.get(
+                      "steps",
+                      [],
+                  )
+
+                  for step in steps:
+                      script = step.get(
+                          "run"
+                      )
+
+                      if not script:
+                          continue
+
+                      script_lower = (
+                          script.lower()
+                      )
+
+                      if (
+                          "apply_v18_patch()"
+                          in script
+                          or
+                          (
+                              "v18"
+                              in script_lower
+                              and
+                              "camera"
+                              in script_lower
+                              and
+                              "work/butterscotch"
+                              in script_lower
+                          )
+                      ):
+                          print(
+                              "Using v18 workflow commit:",
+                              commit,
+                          )
+
+                          print(
+                              "Using v18 build step:",
+                              step.get(
+                                  "name",
+                                  "<unnamed>",
+                              ),
+                          )
+
+                          return (
+                              workflow,
+                              step,
+                          )
+
+              print()
+              print(
+                  "v18 workflows were found, "
+                  "but none contained the "
+                  "actual v18 build script."
+              )
+
+              print(
+                  "Candidate commits:"
+              )
+
+              for commit, _ in candidates:
                   print(
-                      "Found v18 workflow commit:",
+                      " -",
                       commit,
                   )
 
-                  return yaml.safe_load(text)
-
               raise SystemExit(
-                  "ERROR: Could not find the v18 workflow "
-                  "in git history."
+                  "ERROR: Could not identify "
+                  "the successful v18 build script."
               )
 
 
@@ -156,57 +289,69 @@ jobs:
               )
               print("=" * 72)
 
-              root = Path("work/Butterscotch")
+              root = Path(
+                  "work/Butterscotch"
+              )
 
-              vm_path = root / "src/vm_builtins.c"
+              vm_path = (
+                  root /
+                  "src/vm_builtins.c"
+              )
+
               gl_common_h_path = (
                   root /
                   "src/gl_common/gl_common.h"
               )
+
               gl_common_c_path = (
                   root /
                   "src/gl_common/gl_common.c"
               )
+
               gl_renderer_path = (
                   root /
                   "src/gl/gl_renderer.c"
               )
+
               main_path = (
                   root /
                   "src/cli/main.c"
               )
 
-              for path in [
+              required = [
                   vm_path,
                   gl_common_h_path,
                   gl_common_c_path,
                   gl_renderer_path,
                   main_path,
-              ]:
+              ]
+
+              for path in required:
                   if not path.exists():
                       raise SystemExit(
-                          f"Missing source file: {path}"
+                          "Missing source file: "
+                          + str(path)
                       )
 
               vm = vm_path.read_text()
+
               gl_common_h = (
                   gl_common_h_path.read_text()
               )
+
               gl_common_c = (
                   gl_common_c_path.read_text()
               )
+
               gl_renderer = (
                   gl_renderer_path.read_text()
               )
+
               main = main_path.read_text()
 
-              # ==================================================
-              # 1. RESTORE REAL Z-TEST AND Z-WRITE
-              #
-              # v18 temporarily made these no-ops.
-              # POST VOID is a 3D FPS and needs a real depth
-              # buffer together with its Z state.
-              # ==================================================
+              # ==============================================
+              # 1. RESTORE REAL Z TEST
+              # ==============================================
 
               vm, count = re.subn(
                   r'''(
@@ -232,6 +377,10 @@ jobs:
                       "gpu_set_ztestenable"
                   )
 
+              # ==============================================
+              # 2. RESTORE REAL Z WRITE
+              # ==============================================
+
               vm, count = re.subn(
                   r'''(
                       VM_registerBuiltin\(
@@ -256,11 +405,13 @@ jobs:
                       "gpu_set_zwriteenable"
                   )
 
-              vm_path.write_text(vm)
+              vm_path.write_text(
+                  vm
+              )
 
-              # ==================================================
-              # 2. GIVE EVERY GL SURFACE ITS OWN DEPTH BUFFER
-              # ==================================================
+              # ==============================================
+              # 3. ADD DEPTH BUFFER ARRAY TO GL RENDERER
+              # ==============================================
 
               surface_struct_old = '''    GLuint* surfaces;
               GLuint* surfaceTexture;
@@ -272,7 +423,7 @@ jobs:
               GLuint* surfaceTexture;
 
               // POST VOID v19:
-              // depth renderbuffer belonging to each GML surface.
+              // depth renderbuffer for each GML surface.
               GLuint* surfaceDepth;
 
               int32_t* surfaceWidth;
@@ -286,9 +437,9 @@ jobs:
                   "GLRenderer surfaceDepth field",
               )
 
-              # ==================================================
-              # 3. INITIALIZE DEPTH ARRAY
-              # ==================================================
+              # ==============================================
+              # 4. INITIALIZE DEPTH ARRAY
+              # ==============================================
 
               common_init_old = '''    gl->surfaces = nullptr;
               gl->surfaceTexture = nullptr;
@@ -307,19 +458,19 @@ jobs:
                   gl_common_c,
                   common_init_old,
                   common_init_new,
-                  "surface depth initialization",
+                  "surfaceDepth initialization",
               )
 
-              # ==================================================
-              # 4. DELETE DEPTH BUFFERS ON SHUTDOWN
-              # ==================================================
+              # ==============================================
+              # 5. DESTROY DEPTH BUFFERS
+              # ==============================================
 
-              common_destroy_loop_old = '''    for (uint32_t i = 0; gl->surfaceCount > i; i++) {
+              destroy_old = '''    for (uint32_t i = 0; gl->surfaceCount > i; i++) {
                   if (gl->surfaceTexture[i] != 0) glDeleteTextures(1, &gl->surfaceTexture[i]);
                   if (gl->surfaces[i] != 0) glDeleteFramebuffers(1, &gl->surfaces[i]);
               }'''
 
-              common_destroy_loop_new = '''    for (uint32_t i = 0; gl->surfaceCount > i; i++) {
+              destroy_new = '''    for (uint32_t i = 0; gl->surfaceCount > i; i++) {
                   if (
                       gl->surfaceDepth != nullptr &&
                       gl->surfaceDepth[i] != 0
@@ -330,14 +481,18 @@ jobs:
                       );
                   }
 
-                  if (gl->surfaceTexture[i] != 0) {
+                  if (
+                      gl->surfaceTexture[i] != 0
+                  ) {
                       glDeleteTextures(
                           1,
                           &gl->surfaceTexture[i]
                       );
                   }
 
-                  if (gl->surfaces[i] != 0) {
+                  if (
+                      gl->surfaces[i] != 0
+                  ) {
                       glDeleteFramebuffers(
                           1,
                           &gl->surfaces[i]
@@ -347,10 +502,14 @@ jobs:
 
               gl_common_c = replace_once(
                   gl_common_c,
-                  common_destroy_loop_old,
-                  common_destroy_loop_new,
-                  "depth destruction loop",
+                  destroy_old,
+                  destroy_new,
+                  "surface depth destroy",
               )
+
+              # ==============================================
+              # 6. FREE DEPTH ARRAY
+              # ==============================================
 
               common_free_old = '''    free(gl->surfaces);
               free(gl->surfaceTexture);
@@ -367,12 +526,12 @@ jobs:
                   gl_common_c,
                   common_free_old,
                   common_free_new,
-                  "free surfaceDepth",
+                  "surfaceDepth free",
               )
 
-              # ==================================================
-              # 5. ALLOCATE A DEPTH SLOT FOR EVERY NEW SURFACE
-              # ==================================================
+              # ==============================================
+              # 7. ALLOCATE DEPTH SLOT
+              # ==============================================
 
               alloc_old = '''    uint32_t surfaceIndex = GLCommon_allocateSurfaceSlot(&gl->surfaces, &gl->surfaceTexture, &gl->surfaceWidth, &gl->surfaceHeight, &gl->surfaceCount);
 
@@ -386,56 +545,70 @@ jobs:
                   &gl->surfaceCount
               );
 
-              gl->surfaceDepth = (GLuint*)safeRealloc(
-                  gl->surfaceDepth,
-                  gl->surfaceCount * sizeof(GLuint)
-              );
+              gl->surfaceDepth =
+                  (GLuint*)safeRealloc(
+                      gl->surfaceDepth,
+                      gl->surfaceCount *
+                          sizeof(GLuint)
+                  );
 
-              gl->surfaceDepth[surfaceIndex] = 0;
+              gl->surfaceDepth[
+                  surfaceIndex
+              ] = 0;
 
               glGenFramebuffers(
                   1,
-                  &gl->surfaces[surfaceIndex]
+                  &gl->surfaces[
+                      surfaceIndex
+                  ]
               );'''
 
               gl_renderer = replace_once(
                   gl_renderer,
                   alloc_old,
                   alloc_new,
-                  "surface depth slot allocation",
+                  "depth slot allocation",
               )
 
-              # ==================================================
-              # 6. CREATE DEPTH ATTACHMENT
-              # ==================================================
+              # ==============================================
+              # 8. CREATE DEPTH ATTACHMENT
+              # ==============================================
 
-              create_depth_old = '''    glBindFramebuffer(GL_FRAMEBUFFER, gl->surfaces[surfaceIndex]);
+              create_old = '''    glBindFramebuffer(GL_FRAMEBUFFER, gl->surfaces[surfaceIndex]);
               glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, gl->surfaceTexture[surfaceIndex], 0);
 
               gl->surfaceWidth[surfaceIndex] = width;
               gl->surfaceHeight[surfaceIndex] = height;'''
 
-              create_depth_new = '''    glBindFramebuffer(
+              create_new = '''    glBindFramebuffer(
                   GL_FRAMEBUFFER,
-                  gl->surfaces[surfaceIndex]
+                  gl->surfaces[
+                      surfaceIndex
+                  ]
               );
 
               glFramebufferTexture2D(
                   GL_FRAMEBUFFER,
                   GL_COLOR_ATTACHMENT0,
                   GL_TEXTURE_2D,
-                  gl->surfaceTexture[surfaceIndex],
+                  gl->surfaceTexture[
+                      surfaceIndex
+                  ],
                   0
               );
 
               glGenRenderbuffers(
                   1,
-                  &gl->surfaceDepth[surfaceIndex]
+                  &gl->surfaceDepth[
+                      surfaceIndex
+                  ]
               );
 
               glBindRenderbuffer(
                   GL_RENDERBUFFER,
-                  gl->surfaceDepth[surfaceIndex]
+                  gl->surfaceDepth[
+                      surfaceIndex
+                  ]
               );
 
               glRenderbufferStorage(
@@ -449,7 +622,9 @@ jobs:
                   GL_FRAMEBUFFER,
                   GL_DEPTH_ATTACHMENT,
                   GL_RENDERBUFFER,
-                  gl->surfaceDepth[surfaceIndex]
+                  gl->surfaceDepth[
+                      surfaceIndex
+                  ]
               );
 
               GLenum postVoidStatus =
@@ -466,7 +641,8 @@ jobs:
                       "surface %u framebuffer "
                       "status 0x%X\\n",
                       surfaceIndex,
-                      (unsigned)postVoidStatus
+                      (unsigned)
+                          postVoidStatus
                   );
               }
               else {
@@ -480,19 +656,29 @@ jobs:
                   );
               }
 
-              gl->surfaceWidth[surfaceIndex] = width;
-              gl->surfaceHeight[surfaceIndex] = height;'''
+              glBindRenderbuffer(
+                  GL_RENDERBUFFER,
+                  0
+              );
+
+              gl->surfaceWidth[
+                  surfaceIndex
+              ] = width;
+
+              gl->surfaceHeight[
+                  surfaceIndex
+              ] = height;'''
 
               gl_renderer = replace_once(
                   gl_renderer,
-                  create_depth_old,
-                  create_depth_new,
-                  "create surface depth attachment",
+                  create_old,
+                  create_new,
+                  "surface depth attachment",
               )
 
-              # ==================================================
-              # 7. DELETE DEPTH WHEN A USER SURFACE IS FREED
-              # ==================================================
+              # ==============================================
+              # 9. FREE DEPTH WITH SURFACE
+              # ==============================================
 
               surface_free_old = '''    if (gl->surfaceTexture[surfaceID] != 0) glDeleteTextures(1, &gl->surfaceTexture[surfaceID]);
               if (gl->surfaces[surfaceID] != 0) glDeleteFramebuffers(1, &gl->surfaces[surfaceID]);
@@ -503,34 +689,63 @@ jobs:
 
               surface_free_new = '''    if (
                   gl->surfaceDepth != nullptr &&
-                  gl->surfaceDepth[surfaceID] != 0
+                  gl->surfaceDepth[
+                      surfaceID
+                  ] != 0
               ) {
                   glDeleteRenderbuffers(
                       1,
-                      &gl->surfaceDepth[surfaceID]
+                      &gl->surfaceDepth[
+                          surfaceID
+                      ]
                   );
 
-                  gl->surfaceDepth[surfaceID] = 0;
+                  gl->surfaceDepth[
+                      surfaceID
+                  ] = 0;
               }
 
-              if (gl->surfaceTexture[surfaceID] != 0) {
+              if (
+                  gl->surfaceTexture[
+                      surfaceID
+                  ] != 0
+              ) {
                   glDeleteTextures(
                       1,
-                      &gl->surfaceTexture[surfaceID]
+                      &gl->surfaceTexture[
+                          surfaceID
+                      ]
                   );
               }
 
-              if (gl->surfaces[surfaceID] != 0) {
+              if (
+                  gl->surfaces[
+                      surfaceID
+                  ] != 0
+              ) {
                   glDeleteFramebuffers(
                       1,
-                      &gl->surfaces[surfaceID]
+                      &gl->surfaces[
+                          surfaceID
+                      ]
                   );
               }
 
-              gl->surfaces[surfaceID] = 0;
-              gl->surfaceTexture[surfaceID] = 0;
-              gl->surfaceWidth[surfaceID] = 0;
-              gl->surfaceHeight[surfaceID] = 0;'''
+              gl->surfaces[
+                  surfaceID
+              ] = 0;
+
+              gl->surfaceTexture[
+                  surfaceID
+              ] = 0;
+
+              gl->surfaceWidth[
+                  surfaceID
+              ] = 0;
+
+              gl->surfaceHeight[
+                  surfaceID
+              ] = 0;'''
 
               gl_renderer = replace_once(
                   gl_renderer,
@@ -539,9 +754,9 @@ jobs:
                   "surface depth free",
               )
 
-              # ==================================================
-              # 8. RESIZE DEPTH BUFFER TOGETHER WITH SURFACE
-              # ==================================================
+              # ==============================================
+              # 10. RECREATE DEPTH ON SURFACE RESIZE
+              # ==============================================
 
               resize_old = '''    glBindFramebuffer(GL_FRAMEBUFFER, gl->surfaces[surfaceID]);
               glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, gl->surfaceTexture[surfaceID], 0);
@@ -551,37 +766,51 @@ jobs:
 
               resize_new = '''    glBindFramebuffer(
                   GL_FRAMEBUFFER,
-                  gl->surfaces[surfaceID]
+                  gl->surfaces[
+                      surfaceID
+                  ]
               );
 
               glFramebufferTexture2D(
                   GL_FRAMEBUFFER,
                   GL_COLOR_ATTACHMENT0,
                   GL_TEXTURE_2D,
-                  gl->surfaceTexture[surfaceID],
+                  gl->surfaceTexture[
+                      surfaceID
+                  ],
                   0
               );
 
               if (
                   gl->surfaceDepth != nullptr &&
-                  gl->surfaceDepth[surfaceID] != 0
+                  gl->surfaceDepth[
+                      surfaceID
+                  ] != 0
               ) {
                   glDeleteRenderbuffers(
                       1,
-                      &gl->surfaceDepth[surfaceID]
+                      &gl->surfaceDepth[
+                          surfaceID
+                      ]
                   );
 
-                  gl->surfaceDepth[surfaceID] = 0;
+                  gl->surfaceDepth[
+                      surfaceID
+                  ] = 0;
               }
 
               glGenRenderbuffers(
                   1,
-                  &gl->surfaceDepth[surfaceID]
+                  &gl->surfaceDepth[
+                      surfaceID
+                  ]
               );
 
               glBindRenderbuffer(
                   GL_RENDERBUFFER,
-                  gl->surfaceDepth[surfaceID]
+                  gl->surfaceDepth[
+                      surfaceID
+                  ]
               );
 
               glRenderbufferStorage(
@@ -595,7 +824,9 @@ jobs:
                   GL_FRAMEBUFFER,
                   GL_DEPTH_ATTACHMENT,
                   GL_RENDERBUFFER,
-                  gl->surfaceDepth[surfaceID]
+                  gl->surfaceDepth[
+                      surfaceID
+                  ]
               );
 
               GLenum postVoidResizeStatus =
@@ -609,26 +840,37 @@ jobs:
               ) {
                   logWarn(
                       "POST VOID v19: "
-                      "resized surface %d framebuffer "
-                      "status 0x%X\\n",
+                      "resized surface %d "
+                      "framebuffer status 0x%X\\n",
                       surfaceID,
-                      (unsigned)postVoidResizeStatus
+                      (unsigned)
+                          postVoidResizeStatus
                   );
               }
 
-              gl->surfaceWidth[surfaceID] = width;
-              gl->surfaceHeight[surfaceID] = height;'''
+              glBindRenderbuffer(
+                  GL_RENDERBUFFER,
+                  0
+              );
+
+              gl->surfaceWidth[
+                  surfaceID
+              ] = width;
+
+              gl->surfaceHeight[
+                  surfaceID
+              ] = height;'''
 
               gl_renderer = replace_once(
                   gl_renderer,
                   resize_old,
                   resize_new,
-                  "resize surface depth attachment",
+                  "resize depth attachment",
               )
 
-              # ==================================================
-              # 9. CLEAR DEPTH TO 1.0 WHEN GAME CLEARS FRAME
-              # ==================================================
+              # ==============================================
+              # 11. CLEAR BOTH COLOR AND DEPTH
+              # ==============================================
 
               clear_old = '''    glClearColor(r, g, b, alpha);
               glClear(GL_COLOR_BUFFER_BIT);
@@ -649,8 +891,13 @@ jobs:
                   &postVoidOldDepthMask
               );
 
-              glDepthMask(GL_TRUE);
-              glClearDepthf(1.0f);
+              glDepthMask(
+                  GL_TRUE
+              );
+
+              glClearDepthf(
+                  1.0f
+              );
 
               glClear(
                   GL_COLOR_BUFFER_BIT |
@@ -666,12 +913,12 @@ jobs:
                   gl_renderer,
                   clear_old,
                   clear_new,
-                  "clear depth buffer",
+                  "depth clear",
               )
 
-              # ==================================================
-              # 10. FRESH SAVE FOLDER
-              # ==================================================
+              # ==============================================
+              # 12. FRESH SAVE DIRECTORY
+              # ==============================================
 
               if (
                   "Documents/PostVoidV18"
@@ -680,12 +927,6 @@ jobs:
                   main = main.replace(
                       "Documents/PostVoidV18",
                       "Documents/PostVoidV19",
-                  )
-              else:
-                  print(
-                      "NOTE: PostVoidV18 save path "
-                      "was not found; leaving save "
-                      "path unchanged."
                   )
 
               gl_common_h_path.write_text(
@@ -706,46 +947,30 @@ jobs:
 
               print()
               print(
-                  "POST VOID v19 depth patch complete"
+                  "POST VOID v19 depth "
+                  "patch complete"
               )
 
 
-          # ======================================================
-          # BUILD THE EXACT v18 BASE FIRST
-          # ======================================================
+          # ==============================================
+          # GET THE REAL WORKING v18 BUILD
+          # ==============================================
 
-          print(
-              "Searching git history for "
-              "successful v18 workflow..."
+          (
+              v18_workflow,
+              v18_step,
+          ) = find_v18_workflow()
+
+          v18_run_script = (
+              v18_step.get(
+                  "run"
+              )
           )
-
-          v18_workflow = find_v18_workflow()
-
-          v18_steps = (
-              v18_workflow[
-                  "jobs"
-              ][
-                  "build"
-              ][
-                  "steps"
-              ]
-          )
-
-          v18_run_script = None
-
-          for step in v18_steps:
-              if (
-                  step.get("name") ==
-                  "Build v17 base and apply v18 camera fix"
-              ):
-                  v18_run_script = step.get("run")
-                  break
 
           if not v18_run_script:
               raise SystemExit(
-                  "ERROR: Found v18 workflow, "
-                  "but its main build step "
-                  "was not found."
+                  "ERROR: v18 build script "
+                  "is empty."
               )
 
           run_shell_step(
@@ -755,19 +980,21 @@ jobs:
 
           refresh_github_env()
 
-          # ======================================================
-          # APPLY v19 PATCH TO THE PREPARED v18 SOURCE
-          # ======================================================
+          # ==============================================
+          # PATCH THE PREPARED V18 SOURCE
+          # ==============================================
 
           apply_v19_patch()
 
-          # ======================================================
-          # REBUILD USING THE SAME KNOWN-GOOD v16 BUILD STEPS
-          # ======================================================
+          # ==============================================
+          # LOAD KNOWN-GOOD BUILD/PACKAGE STEPS
+          # ==============================================
 
           print()
           print("=" * 72)
-          print("REBUILDING POST VOID v19")
+          print(
+              "REBUILDING POST VOID v19"
+          )
           print("=" * 72)
 
           v16_workflow = yaml.safe_load(
@@ -812,40 +1039,71 @@ jobs:
                   step["run"],
               )
 
-          # ======================================================
-          # PACKAGE AS v19
-          # ======================================================
+          # ==============================================
+          # FIND PRODUCED IPA
+          # ==============================================
 
-          base_ipa = Path(
+          expected_ipa = Path(
               "out/"
               "POST-VOID-iOS-v16-"
               "WINDOWS-INPUTFIX-unsigned.ipa"
           )
 
+          if not expected_ipa.exists():
+              ipa_files = list(
+                  Path("out").glob(
+                      "*.ipa"
+                  )
+              )
+
+              ipa_files = [
+                  p
+                  for p in ipa_files
+                  if "v19" not in p.name.lower()
+              ]
+
+              if not ipa_files:
+                  raise SystemExit(
+                      "ERROR: rebuild completed "
+                      "but no IPA was produced."
+                  )
+
+              expected_ipa = max(
+                  ipa_files,
+                  key=lambda p:
+                      p.stat().st_mtime,
+              )
+
+              print(
+                  "Using produced IPA:",
+                  expected_ipa,
+              )
+
           output_ipa = Path(
               "out/"
               "POST-VOID-iOS-v19-"
-              "DEPTH-GREENSCREEN-FIX-unsigned.ipa"
+              "DEPTH-GREENSCREEN-FIX-"
+              "unsigned.ipa"
           )
-
-          if not base_ipa.exists():
-              raise SystemExit(
-                  "ERROR: v19 rebuild finished "
-                  "without producing the IPA."
-              )
 
           if output_ipa.exists():
               output_ipa.unlink()
 
-          base_ipa.rename(
+          expected_ipa.rename(
               output_ipa
           )
 
           print()
           print("=" * 72)
-          print("POST VOID v19 IPA READY")
+          print(
+              "POST VOID v19 IPA READY"
+          )
           print("=" * 72)
-          print(output_ipa)
+
+          print(
+              output_ipa
+          )
+
           print(
               f"{output_ipa.stat().st_size / 1024 / 1024:.1f} MB"
           )
@@ -866,3 +1124,4 @@ jobs:
           name: POST-VOID-iOS-v19-build-logs
           path: logs/
           if-no-files-found: ignore
+          retention-days: 7
